@@ -201,4 +201,38 @@ class DictationDiagnosticsTest {
         assertTrue(output.contains("\"consistency\":\"best-effort\""))
         assertTrue(output.contains("unit_test_marker"))
     }
+
+    @Test
+    fun persistsAtomicLastSnapshotJsonAndRedactedLastCrashJson() {
+        val dir = Files.createTempDirectory("voice-kb-diag-crash").toFile()
+        try {
+            val recorder = DiagnosticFlightRecorder(logDir = dir, ringCapacity = 8)
+            val snapJson = """{"schema":1,"consistency":"best-effort","service":{"phase":"TRANSCRIBING"}}"""
+            recorder.record("state", "before_crash", opId = "rec-0042")
+            recorder.writeSnapshotAsync(snapJson)
+            assertTrue(recorder.flush(timeoutMs = 2_000L))
+
+            val snapshotFile = File(dir, DiagnosticFlightRecorder.SNAPSHOT_FILE)
+            assertTrue("last_snapshot.json should exist", snapshotFile.isFile)
+            assertTrue(snapshotFile.readText().contains("\"phase\":\"TRANSCRIBING\""))
+
+            val canaryKey = "AIzaSyCRASH_CANARY_9876543210"
+            val fatal = IllegalStateException("fatal boom with x-goog-api-key=$canaryKey")
+            recorder.writeCrashSync("voice-kb-worker", fatal, snapJson)
+
+            val crashFile = File(dir, DiagnosticFlightRecorder.CRASH_FILE)
+            val eventsFile = File(dir, DiagnosticFlightRecorder.ACTIVE_LOG_FILE)
+            assertTrue("last_crash.json should exist", crashFile.isFile)
+            assertTrue("events.jsonl should be flushed synchronously on crash", eventsFile.isFile)
+
+            val crashText = crashFile.readText()
+            assertFalse("crash report must redact API key", crashText.contains(canaryKey))
+            assertTrue(crashText.contains("\"thread\":\"voice-kb-worker\""))
+            assertTrue(crashText.contains("\"errClass\":\"java.lang.IllegalStateException\""))
+            assertTrue(crashText.contains("\"snapshot\":{\"schema\":1"))
+            assertTrue(eventsFile.readText().contains("uncaught_exception"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

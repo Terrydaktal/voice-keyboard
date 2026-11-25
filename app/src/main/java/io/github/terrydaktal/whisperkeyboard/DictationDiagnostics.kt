@@ -371,6 +371,70 @@ internal class DiagnosticFlightRecorder(
         synchronized(diskWriteLock) {
             runCatching { File(dir, ACTIVE_LOG_FILE).delete() }
             runCatching { File(dir, PREV_LOG_FILE).delete() }
+            runCatching { File(dir, SNAPSHOT_FILE).delete() }
+            runCatching { File(dir, CRASH_FILE).delete() }
+        }
+    }
+
+    fun writeSnapshotAsync(snapshotJson: String) {
+        val exec = diskExecutor ?: return
+        val dir = logDir ?: return
+        exec.execute {
+            writeAtomicFile(dir, SNAPSHOT_FILE, snapshotJson + "\n")
+        }
+    }
+
+    fun writeCrashSync(threadName: String, error: Throwable, snapshotJson: String) {
+        recordError(
+            stage = "uncaught_exception",
+            code = error.javaClass.simpleName.ifEmpty { "Throwable" },
+            error = error,
+            extraFields = mapOf("fatalThread" to threadName),
+        )
+        val dir = logDir ?: return
+        // Drain all queued JSONL lines synchronously before process death.
+        while (diskQueue.isNotEmpty()) {
+            drainPendingDiskLines()
+        }
+        val stackLines = error.stackTrace.take(MAX_CRASH_STACK_FRAMES).map { frame ->
+            redactString(frame.toString()).take(160)
+        }
+        val crashJson = buildString(1024) {
+            append('{')
+            append("\"schema\":").append(SCHEMA_VERSION)
+            append(",\"tsWallMs\":").append(wallClockMs())
+            append(",\"tsMonoMs\":").append(monoClockMs())
+            append(",\"thread\":\"").append(jsonEscape(threadName.take(64))).append('"')
+            append(",\"errClass\":\"").append(jsonEscape(error.javaClass.name)).append('"')
+            append(",\"message\":\"").append(jsonEscape(redactString(error.message.orEmpty()).take(MAX_VALUE_LEN))).append('"')
+            append(",\"causeChain\":\"").append(jsonEscape(buildCauseChain(error))).append('"')
+            append(",\"stack\":[")
+            stackLines.forEachIndexed { idx, line ->
+                if (idx > 0) append(',')
+                append('"').append(jsonEscape(line)).append('"')
+            }
+            append(']')
+            append(",\"snapshot\":").append(snapshotJson)
+            append("}\n")
+        }
+        writeAtomicFile(dir, CRASH_FILE, crashJson)
+        writeAtomicFile(dir, SNAPSHOT_FILE, snapshotJson + "\n")
+    }
+
+    private fun writeAtomicFile(dir: File, fileName: String, content: String) {
+        synchronized(diskWriteLock) {
+            try {
+                if (!dir.exists()) dir.mkdirs()
+                val target = File(dir, fileName)
+                val tmp = File(dir, "$fileName.tmp")
+                FileOutputStream(tmp, false).bufferedWriter(Charsets.UTF_8).use { it.write(content) }
+                if (!tmp.renameTo(target)) {
+                    FileOutputStream(target, false).bufferedWriter(Charsets.UTF_8).use { it.write(content) }
+                    tmp.delete()
+                }
+            } catch (_: Throwable) {
+                diskWriteErrors.incrementAndGet()
+            }
         }
     }
 
@@ -458,6 +522,9 @@ internal class DiagnosticFlightRecorder(
         const val DEFAULT_DISK_QUEUE_CAPACITY = 512
         const val ACTIVE_LOG_FILE = "events.jsonl"
         const val PREV_LOG_FILE = "events.1.jsonl"
+        const val SNAPSHOT_FILE = "last_snapshot.json"
+        const val CRASH_FILE = "last_crash.json"
+        private const val MAX_CRASH_STACK_FRAMES = 24
         private const val MAX_FIELDS = 24
         private const val MAX_KEY_LEN = 40
         private const val MAX_VALUE_LEN = 240
@@ -563,6 +630,8 @@ internal object DictationDiagnostics {
     private const val DIR_NAME = "diagnostics"
 
     @Volatile private var initialized = false
+    @Volatile private var appContext: Context? = null
+    @Volatile private var crashHandlerInstalled = false
     @Volatile private var buildVersionName = "unknown"
     @Volatile private var buildVersionCode = -1L
     @Volatile private var buildPackageName = "io.github.terrydaktal.whisperkeyboard"
@@ -608,6 +677,7 @@ internal object DictationDiagnostics {
         synchronized(this) {
             if (initialized) return
             val appCtx = context.applicationContext ?: context
+            appContext = appCtx
             buildPackageName = appCtx.packageName
             runCatching {
                 val pi = appCtx.packageManager.getPackageInfo(appCtx.packageName, 0)
@@ -633,6 +703,7 @@ internal object DictationDiagnostics {
             recorder = newRecorder
             initialized = true
             initCount.incrementAndGet()
+            installUncaughtExceptionHandler()
             newRecorder.record(
                 category = "lifecycle",
                 event = "process_init",
@@ -645,7 +716,27 @@ internal object DictationDiagnostics {
                     "existingLogBytes" to newRecorder.totalDiskBytes(),
                 ),
             )
+            persistSnapshot(appCtx)
         }
+    }
+
+    private fun installUncaughtExceptionHandler() {
+        if (crashHandlerInstalled) return
+        crashHandlerInstalled = true
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                val snap = buildSnapshotJson(appContext)
+                recorder.writeCrashSync(thread.name, error, snap)
+            }
+            previous?.uncaughtException(thread, error)
+        }
+    }
+
+    fun persistSnapshot(context: Context? = appContext) {
+        if (!initialized) return
+        val snap = buildSnapshotJson(context)
+        recorder.writeSnapshotAsync(snap)
     }
 
     val counters: DiagnosticFlightRecorder.Counters
@@ -685,6 +776,7 @@ internal object DictationDiagnostics {
             opId = opId,
             extraFields = extraFields,
         )
+        persistSnapshot()
     }
 
     fun updateImeState(transform: (ImeStateSnapshot) -> ImeStateSnapshot) {

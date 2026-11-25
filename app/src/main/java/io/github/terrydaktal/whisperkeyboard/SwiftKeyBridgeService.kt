@@ -11,6 +11,8 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
+import java.io.FileDescriptor
+import java.io.PrintWriter
 
 /**
  * Watches for the calling keyboard to reopen after [SpeechBridgeActivity] returns, captures
@@ -30,7 +32,14 @@ class SwiftKeyBridgeService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        DictationDiagnostics.init(this)
         connected = this
+        DictationDiagnostics.record(category = "lifecycle", event = "bridge_service_connected")
+    }
+
+    override fun dump(fd: FileDescriptor?, writer: PrintWriter?, args: Array<out String>?) {
+        if (writer == null) return
+        DictationDiagnostics.dumpToWriter(writer, this, "SwiftKeyBridgeService")
     }
 
     internal fun startDictation(caller: String) {

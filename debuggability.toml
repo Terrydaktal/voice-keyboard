@@ -78,11 +78,11 @@ atomic_publication = "not_applicable"
 generation_manifest = "not_applicable"
 
 [live]
-capabilities_command = "adb shell dumpsys activity service io.github.terrydaktal.whisperkeyboard/.WhisperRecordingService"
-snapshot_command = "adb shell dumpsys activity service io.github.terrydaktal.whisperkeyboard/.WhisperRecordingService"
+capabilities_command = "./scripts/adb-diagnose.sh -s DEVICE"
+snapshot_command = "./scripts/adb-diagnose.sh -s DEVICE"
 snapshot_consistency = "best-effort"
 independent_of_failure_loop = "implemented_tested"
-capture_timeout_ms = 1000
+capture_timeout_ms = 2000
 
 [history]
 flight_recorder = "implemented_tested"
@@ -134,7 +134,7 @@ fault_injection = ["Synthetic gRPC status validation and editor target mismatch 
 crash_capture = "implemented_tested"
 includes_history = "implemented_tested"
 oom_or_external_kill_detection = "planned"
-retention_policy = "Two rotating files (events.jsonl + events.1.jsonl), 256 KiB each (512 KiB cap) in private filesDir/diagnostics"
+retention_policy = "Rotating events.jsonl + events.1.jsonl (256 KiB each, 512 KiB cap) plus atomic last_snapshot.json and last_crash.json in private filesDir/diagnostics"
 
 [recovery]
 pre_repair_evidence = "implemented_untested"
@@ -142,7 +142,7 @@ restart_or_fallback_history = "implemented_untested"
 last_failure_retention = "implemented_tested"
 
 [domain]
-state_dump = "WhisperRecordingService.dump and WhisperKeyboardService.dump emit JSON snapshot + recent ring events"
+state_dump = "Atomic last_snapshot.json on disk plus WhisperRecordingService, WhisperKeyboardService, and SwiftKeyBridgeService dump() output"
 cross_boundary_ids = ["opId", "seg"]
 
 [security]
@@ -256,8 +256,8 @@ items = [
 "invariants.progress_rules" = { status = "implemented_untested", reason = "10s S3 heartbeat and 180s/240s segment roll implemented in runtime streaming loop", implementation = "RamblerS3Client.writeOggChunk, RamblerLiveSession.writePcm", test = "planned" }
 "invariants.resource_balances" = { status = "implemented_tested", reason = "Atomic lifecycle counters track session, S3, Whisper, queue, and commit balances", implementation = "DiagnosticFlightRecorder.Counters", test = "DictationDiagnosticsTest" }
 "build.identity" = { status = "implemented_tested", reason = "PackageInfo versionName/versionCode + device model included in process_init and snapshot JSON", implementation = "DictationDiagnostics.init, DictationDiagnostics.buildSnapshotJson", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
-"live.capabilities_command" = { status = "implemented_tested", reason = "dumpsys service dump outputs schema version, build identity, and live state", implementation = "WhisperRecordingService.dump, WhisperKeyboardService.dump", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
-"live.snapshot_command" = { status = "implemented_tested", reason = "Binder-thread dumpsys and in-app SetupActivity Diagnostics panel read lock-free state snapshots", implementation = "DictationDiagnostics.dumpToWriter, SetupActivity.showDiagnosticsDialog", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"live.capabilities_command" = { status = "implemented_tested", reason = "scripts/adb-diagnose.sh and service dumps emit schema version, build identity, and live/persisted state", implementation = "scripts/adb-diagnose.sh, SwiftKeyBridgeService.dump, WhisperRecordingService.dump, WhisperKeyboardService.dump", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"live.snapshot_command" = { status = "implemented_tested", reason = "Persisted last_snapshot.json works even when Android App Freezer freezes idle processes; live dumpsys supplements while active", implementation = "DictationDiagnostics.persistSnapshot, DictationDiagnostics.dumpToWriter, scripts/adb-diagnose.sh", test = "DictationDiagnosticsTest.persistsAtomicLastSnapshotJsonAndRedactedLastCrashJson" }
 "history.schema" = { status = "implemented_tested", reason = "Versioned JSONL schema=1 with monotonic seq, wall/mono timestamps, opId, category, event, bounded fields", implementation = "DiagnosticFlightRecorder.Event.toJsonLine", test = "DictationDiagnosticsTest.persistedJsonlRotatesAndReadsAcrossPreviousAndActiveFiles" }
 "resources.declared_budgets" = { status = "implemented_tested", reason = "Hard caps enforced on pending recordings (20 files/50 MiB) and diagnostics (512 events/512 KiB disk)", implementation = "PendingRecordingStore.pruneToLimits, DiagnosticFlightRecorder", test = "PendingRecordingStoreTest, DictationDiagnosticsTest" }
 "reproduction.recorded_inputs" = { status = "implemented_tested", reason = "Finalized WAV clips preserved in PendingRecordingStore until commitText succeeds", implementation = "PendingRecordingStore", test = "PendingRecordingStoreTest" }

@@ -394,6 +394,7 @@ class WhisperKeyboardService : InputMethodService() {
                     "transcriptLen" to (text?.length ?: 0),
                 ),
             )
+            DictationDiagnostics.persistSnapshot(this)
             if (blockReason == "editor_changed" && viewActive && isInputViewShown) {
                 Toast.makeText(this, R.string.tap_insert_transcript, Toast.LENGTH_SHORT).show()
             }
@@ -422,6 +423,7 @@ class WhisperKeyboardService : InputMethodService() {
                     "showError" to showError,
                 ),
             )
+            DictationDiagnostics.persistSnapshot(this)
             WhisperRecordingService.transcriptInserted()
         } else {
             DictationDiagnostics.counters.commitsFailed.incrementAndGet()
@@ -444,6 +446,7 @@ class WhisperKeyboardService : InputMethodService() {
                     "showError" to showError,
                 ),
             )
+            DictationDiagnostics.persistSnapshot(this)
             Toast.makeText(this, R.string.insert_error, Toast.LENGTH_SHORT).show()
         }
     }

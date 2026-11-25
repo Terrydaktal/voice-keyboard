@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.terrydaktal.whisperkeyboard"
         minSdk = 29
         targetSdk = 36
-        versionCode = 14
-        versionName = "2.5.0"
+        versionCode = 15
+        versionName = "2.5.1"
     }
 
     compileOptions {

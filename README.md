@@ -5,7 +5,7 @@ Standalone Android voice dictation keyboard (`io.github.terrydaktal.whisperkeybo
 ## Features
 
 - **Rambler (default):** live-encodes 16 kHz mono Ogg/Opus via Android `MediaCodec` (`c2.android.opus.encoder`) and streams over HTTP/2 gRPC (`S3Bidi`) to Google’s `beyond-a2a-recognizer` (Gemini v3, profanity filter off, `en-GB` default), with automatic 3–4 minute rolling segments. Works out of the box with no server setup; the top-right corner always displays **Rambler ▾** (showing only **Rambler** in the dropdown until a Whisper URL is configured).
-- **Whisper (optional):** enter any local or Tailscale `whisper_service.py` URL in Setup (e.g. `http://<host>:5001/transcribe_raw`) to enable switching between **Rambler** and **Whisper** from the top-right dropdown or Setup. Clear the URL to return to Rambler-only mode.
+- **Whisper (optional):** enter any local or Tailscale [`transcription-server`](https://github.com/Terrydaktal/transcription-server) (`whisper_service.py`) URL in Setup (e.g. `http://<host>:5001/transcribe_raw`) to enable switching between **Rambler** and **Whisper** from the top-right dropdown or Setup. Clear the URL to return to Rambler-only mode.
 - **Keyboard mic handoff & configurable return keyboard:** built directly into the same APK (`SpeechBridgeActivity` + `SwiftKeyBridgeService`) — opens from SwiftKey or any active keyboard firing `ACTION_RECOGNIZE_SPEECH`, matches the calling keyboard’s height, and lets you choose which keyboard the top-left `← <Keyboard>` back button returns to (or **Auto (last keyboard)**) in Setup.
 - **Backspace & editor-aware Enter:** SwiftKey-positioned bottom-right column — tap Backspace for a character, hold to delete one word at a time; Enter dispatches the active field’s IME action (`Send`, `Search`, `Go`, `Next`, `Done`) or inserts a newline in multi-line fields.
 - **Crash-safe retry queue:** finalized WAVs enter `filesDir/pending_dictations/` on Stop (capped at 20 files / 50 MB) and are auto-deleted immediately after `commitText()` delivers the transcript. Failed uploads stay queued across process kills and reboots, auto-retry while the keyboard is open, and can be retried via the bottom-left **↻ Retry (N)** button on either backend.
@@ -17,6 +17,9 @@ voice-keyboard/
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── gradle.properties
+├── debuggability.toml                   # Schema-v6 Stateful debuggability contract
+├── scripts/
+│   └── adb-diagnose.sh                  # One-command remote ADB diagnostic collector
 ├── gradle/
 │   ├── libs.versions.toml
 │   └── wrapper/
@@ -87,22 +90,20 @@ adb -s DEVICE install -r app/build/outputs/apk/debug/app-debug.apk
    - Tap your keyboard’s microphone in a text field and choose **Voice Keyboard** (always).
 3. *(Optional — local Whisper backend)*: enter your Whisper server URL in **Voice Keyboard** Setup and tap **Save server URL**.
 
-## Diagnostics & Debugging
+## Diagnostics & Debugging (Remote ADB)
 
-Voice Keyboard keeps an always-on, privacy-safe causal flight recorder (`DictationDiagnostics`, schema v1) that never logs raw transcripts or API keys. Events are stored in a 512-entry memory ring, mirrored to logcat (`VoiceKeyboardDiag`), and persisted asynchronously to rotating JSONL files (`filesDir/diagnostics/events.jsonl` + `events.1.jsonl`, 512 KiB max) so failure evidence survives Android logcat rotation and process restarts.
+Voice Keyboard keeps an always-on, privacy-safe causal flight recorder (`DictationDiagnostics`, schema v1) designed for remote ADB inspection without cluttering the in-app Setup UI. Raw transcripts, Google API keys, bearer tokens, and URL credentials are never logged.
 
-Three independent ways to inspect diagnostics:
-1. **On-device (no computer required):** Open **Voice Keyboard** Setup → scroll to **Diagnostics** to see session/S3/commit counters and the last error, tap **View log**, or tap **Copy report**.
-2. **Live snapshot via `dumpsys` (works even if UI is stuck):**
-   ```sh
-   adb -s DEVICE shell dumpsys activity service io.github.terrydaktal.whisperkeyboard/.WhisperRecordingService
-   adb -s DEVICE shell dumpsys input_method | grep -A 80 "VoiceKeyboard Diagnostics"
-   ```
-3. **Persisted post-mortem JSONL log & live logcat stream:**
-   ```sh
-   adb -s DEVICE shell run-as io.github.terrydaktal.whisperkeyboard cat files/diagnostics/events.jsonl
-   adb -s DEVICE logcat -s VoiceKeyboardDiag
-   ```
+Artifacts persisted in private app storage (`filesDir/diagnostics/`, readable instantly via `adb shell run-as` even when Android’s App Freezer has frozen the idle process or after a crash):
+- `events.jsonl` + `events.1.jsonl`: rotating structured JSONL event stream (512 KiB total cap) correlated by per-session `opId` (`rec-NNNN` / `retry-NNNN`).
+- `last_snapshot.json`: atomically updated JSON snapshot (build identity, config, counters, IME/service state, last error) written on process init, session completion, errors, and insert decisions.
+- `last_crash.json`: written synchronously by an `UncaughtExceptionHandler` (after flushing pending `events.jsonl` lines) if an uncaught exception kills the process.
+
+Pull everything in one command:
+```sh
+./scripts/adb-diagnose.sh -s DEVICE
+```
+Optional flags: `--lines 150` (adjust event tail), `--clear` (wipe device diagnostic files). Live `dumpsys` hooks are also implemented on `WhisperRecordingService`, `WhisperKeyboardService`, and `SwiftKeyBridgeService`, and events mirror to `adb logcat -s VoiceKeyboardDiag`.
 
 ## Migrating from the Old Two-App Setup
 

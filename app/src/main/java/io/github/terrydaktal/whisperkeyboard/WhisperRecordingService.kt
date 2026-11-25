@@ -901,6 +901,9 @@ class WhisperRecordingService : Service() {
                         "transcriptLen" to (next.transcript?.length ?: 0),
                     ),
                 )
+                if (next.phase == Phase.RESULT || next.phase == Phase.FINISHED) {
+                    DictationDiagnostics.persistSnapshot()
+                }
             }
             listeners.toList().forEach { it(next) }
         }
