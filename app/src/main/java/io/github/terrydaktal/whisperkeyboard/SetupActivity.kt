@@ -19,6 +19,8 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
@@ -35,6 +37,11 @@ class SetupActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var grantCommandView: TextView
     private lateinit var returnKeyboardSpinner: Spinner
+    private lateinit var backendHeading: TextView
+    private lateinit var backendGroup: RadioGroup
+    private lateinit var clearAddressButton: Button
+    private var ramblerRadioId = 0
+    private var whisperRadioId = 0
     private var returnOptions: List<ReturnKeyboardOption> = emptyList()
     private var updatingReturnSpinner = false
 
@@ -119,6 +126,43 @@ class SetupActivity : Activity() {
         }
         content.addView(returnKeyboardSpinner)
 
+        backendHeading = TextView(this).apply {
+            setText(R.string.backend_heading)
+            textSize = 18f
+            setPadding(0, dp(12), 0, dp(4))
+        }
+        content.addView(backendHeading)
+
+        ramblerRadioId = View.generateViewId()
+        whisperRadioId = View.generateViewId()
+        backendGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            addView(RadioButton(this@SetupActivity).apply {
+                id = ramblerRadioId
+                setText(R.string.backend_rambler_setup)
+                minHeight = dp(48)
+            })
+            addView(RadioButton(this@SetupActivity).apply {
+                id = whisperRadioId
+                setText(R.string.backend_whisper_setup)
+                minHeight = dp(48)
+            })
+        }
+        content.addView(backendGroup)
+
+        val localeField = EditText(this).apply {
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT
+            setHint(R.string.rambler_locale_hint)
+            setText(DictationSettings.locale(this@SetupActivity))
+        }
+        content.addView(localeField)
+        addButton(content, R.string.save_locale) {
+            val saved = DictationSettings.setLocale(this, localeField.text.toString())
+            localeField.setText(saved)
+            Toast.makeText(this, getString(R.string.locale_saved, saved), Toast.LENGTH_SHORT).show()
+        }
+
         val address = EditText(this).apply {
             setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -126,17 +170,53 @@ class SetupActivity : Activity() {
             setText(WhisperEndpoint.savedAddress(this@SetupActivity))
         }
         content.addView(address)
-        addButton(content, R.string.save_address) {
-            val endpoint = WhisperEndpoint.parse(address.text.toString())
-            if (endpoint == null) {
-                address.error = getString(R.string.address_invalid)
-            } else {
-                WhisperEndpoint.save(this, endpoint)
+
+        val urlActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        urlActions.addView(
+            Button(this).apply {
+                setText(R.string.save_address)
+                setOnClickListener {
+                    val raw = address.text.toString().trim()
+                    if (raw.isEmpty()) {
+                        WhisperEndpoint.clear(this@SetupActivity)
+                        DictationSettings.setBackend(this@SetupActivity, DictationBackend.RAMBLER)
+                        address.error = null
+                        updateBackendControls()
+                        Toast.makeText(this@SetupActivity, R.string.address_cleared, Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+                    val endpoint = WhisperEndpoint.parse(raw)
+                    if (endpoint == null) {
+                        address.error = getString(R.string.address_invalid)
+                    } else {
+                        WhisperEndpoint.save(this@SetupActivity, endpoint)
+                        address.error = null
+                        address.setText(endpoint.toExternalForm())
+                        updateBackendControls()
+                        Toast.makeText(this@SetupActivity, R.string.address_saved, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        clearAddressButton = Button(this).apply {
+            setText(R.string.clear_address)
+            setOnClickListener {
+                WhisperEndpoint.clear(this@SetupActivity)
+                DictationSettings.setBackend(this@SetupActivity, DictationBackend.RAMBLER)
+                address.setText("")
                 address.error = null
-                address.setText(endpoint.toExternalForm())
-                Toast.makeText(this, R.string.address_saved, Toast.LENGTH_SHORT).show()
+                updateBackendControls()
+                Toast.makeText(this@SetupActivity, R.string.address_cleared, Toast.LENGTH_SHORT).show()
             }
         }
+        urlActions.addView(
+            clearAddressButton,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+        )
+        content.addView(urlActions)
 
         content.addView(EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -155,6 +235,12 @@ class SetupActivity : Activity() {
         updateNotificationButton()
         updateReturnKeyboardSpinner()
         updateBridgeStatus()
+        updateBackendControls()
+    }
+
+    override fun onPause() {
+        backendGroup.setOnCheckedChangeListener(null)
+        super.onPause()
     }
 
     override fun onRequestPermissionsResult(
@@ -220,6 +306,31 @@ class SetupActivity : Activity() {
         )
         statusView.text = status.joinToString("\n")
         grantCommandView.visibility = if (canWrite) View.GONE else View.VISIBLE
+    }
+
+    private fun updateBackendControls() {
+        val whisperConfigured = WhisperEndpoint.isConfigured(this)
+        val visibility = if (whisperConfigured) View.VISIBLE else View.GONE
+        backendHeading.visibility = visibility
+        backendGroup.visibility = visibility
+        clearAddressButton.visibility = visibility
+
+        backendGroup.setOnCheckedChangeListener(null)
+        if (!whisperConfigured) return
+        backendGroup.check(
+            when (DictationSettings.backend(this)) {
+                DictationBackend.RAMBLER -> ramblerRadioId
+                DictationBackend.WHISPER -> whisperRadioId
+            },
+        )
+        backendGroup.setOnCheckedChangeListener { _, checkedId ->
+            val selected = when (checkedId) {
+                ramblerRadioId -> DictationBackend.RAMBLER
+                whisperRadioId -> DictationBackend.WHISPER
+                else -> return@setOnCheckedChangeListener
+            }
+            DictationSettings.setBackend(this, selected)
+        }
     }
 
     private fun requestMicrophone() {

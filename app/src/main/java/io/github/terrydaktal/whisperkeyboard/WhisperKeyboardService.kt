@@ -27,9 +27,13 @@ class WhisperKeyboardService : InputMethodService() {
     private var passwordField = false
     private var submittedFrom: InputConnection? = null
     private val layoutPreferences by lazy { KeyboardLayoutStore.preferences(this) }
+    private val dictationPreferences by lazy { DictationSettings.preferences(this) }
     private val onLayoutChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
         panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+    }
+    private val onDictationSettingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        refreshBackendButton()
     }
 
     private val onStateChanged: (WhisperRecordingService.Snapshot) -> Unit = { state ->
@@ -48,15 +52,18 @@ class WhisperKeyboardService : InputMethodService() {
         WhisperRecordingService.listeners.add(onStateChanged)
         WhisperRecordingService.levelListeners.add(onAudioLevel)
         layoutPreferences.registerOnSharedPreferenceChangeListener(onLayoutChanged)
+        dictationPreferences.registerOnSharedPreferenceChangeListener(onDictationSettingsChanged)
     }
 
     override fun onCreateInputView(): View = MicrophonePanel(
         this,
         ::handleMic,
         ::returnToConfiguredKeyboard,
+        ::showBackendMenu,
     ).also {
         panel = it
         it.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+        refreshBackendButton()
         render(WhisperRecordingService.snapshot.phase)
     }
 
@@ -69,6 +76,7 @@ class WhisperKeyboardService : InputMethodService() {
         passwordField = isPassword(info.inputType)
         panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
         panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+        refreshBackendButton()
         render(WhisperRecordingService.snapshot.phase)
         if (!opening) return
 
@@ -119,12 +127,22 @@ class WhisperKeyboardService : InputMethodService() {
         WhisperRecordingService.listeners.remove(onStateChanged)
         WhisperRecordingService.levelListeners.remove(onAudioLevel)
         layoutPreferences.unregisterOnSharedPreferenceChangeListener(onLayoutChanged)
+        dictationPreferences.unregisterOnSharedPreferenceChangeListener(onDictationSettingsChanged)
         super.onDestroy()
     }
 
     private fun closeView() {
         viewActive = false
         viewGeneration++
+    }
+
+    private fun refreshBackendButton() {
+        panel?.updateBackend(DictationSettings.backend(this))
+    }
+
+    private fun showBackendMenu(anchor: View) {
+        val recording = WhisperRecordingService.snapshot.phase == Phase.RECORDING
+        DictationSettings.showBackendMenu(anchor, isRecording = recording)
     }
 
     private fun handleMic() {

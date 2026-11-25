@@ -39,5 +39,8 @@ internal object WhisperBackend : TranscriptionBackend {
 }
 
 internal object TranscriptionRegistry {
-    fun activeBackend(context: Context): TranscriptionBackend = WhisperBackend
+    fun activeBackend(context: Context): TranscriptionBackend = when (DictationSettings.backend(context)) {
+        DictationBackend.RAMBLER -> RamblerBackend
+        DictationBackend.WHISPER -> WhisperBackend
+    }
 }

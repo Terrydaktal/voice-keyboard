@@ -25,6 +25,7 @@ internal class MicrophonePanel(
     context: Context,
     onMicrophone: () -> Unit,
     onReturnKeyboard: () -> Unit,
+    onBackendMenu: (View) -> Unit,
 ) : FrameLayout(context) {
     private val waveform = Waveform(context)
     private val fill = GradientDrawable().apply { shape = GradientDrawable.OVAL }
@@ -43,6 +44,7 @@ internal class MicrophonePanel(
         visibility = View.GONE
     }
     private val returnButton: Button
+    private val backendButton: Button
 
     var keyboardHeight: Int = KeyboardLayoutStore.keyboardHeight(context)
         set(value) {
@@ -84,6 +86,18 @@ internal class MicrophonePanel(
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
         )
 
+        backendButton = Button(context, null, android.R.attr.borderlessButtonStyle).apply {
+            id = R.id.dictation_settings_button
+            isAllCaps = false
+            maxLines = 1
+            setTextColor(controlColor)
+            setOnClickListener(onBackendMenu)
+        }
+        topBar.addView(
+            backendButton,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(48)),
+        )
+
         addView(
             topBar,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP).apply {
@@ -94,6 +108,7 @@ internal class MicrophonePanel(
         )
 
         updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(context))
+        updateBackend(DictationSettings.backend(context))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -109,6 +124,14 @@ internal class MicrophonePanel(
             returnButton.text = context.getString(R.string.return_keyboard_button, label)
             returnButton.contentDescription = context.getString(R.string.back_to_keyboard, label)
         }
+    }
+
+    fun updateBackend(backend: DictationBackend) {
+        backendButton.setText(backend.buttonLabel)
+        backendButton.contentDescription = context.getString(
+            R.string.backend_button_description,
+            context.getString(backend.menuLabel),
+        )
     }
 
     fun show(label: Int, enabled: Boolean, recording: Boolean, busy: Boolean) {

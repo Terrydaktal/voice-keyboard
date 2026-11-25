@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Voice Keyboard</string>
     <string name="accessibility_description">Opens Voice Keyboard from your keyboard’s microphone button.</string>
-    <string name="setup_summary">Voice Keyboard opens from your keyboard’s microphone button, matches its height, and returns through the top-left keyboard button. Choose your return keyboard and Whisper server URL below.</string>
+    <string name="setup_summary">Voice Keyboard uses Rambler (Google Gemini v3 live streaming) out of the box and can open from your keyboard’s microphone button. Choose which keyboard the back button returns to below, and optionally configure a local Whisper server URL to switch between Rambler and Whisper.</string>
     <string name="return_keyboard_heading">Return keyboard</string>
     <string name="return_keyboard_auto">Auto (last keyboard)</string>
     <string name="return_keyboard_status">Back button returns to %1$s.</string>
@@ -11,9 +11,24 @@
     <string name="return_keyboard_fallback">← Keyboard</string>
     <string name="back_to_keyboard">Back to %1$s</string>
     <string name="back_to_keyboard_fallback">Switch keyboard</string>
-    <string name="server_address">Whisper server URL (e.g. http://host:5001)</string>
+    <string name="backend_heading">Transcription backend</string>
+    <string name="backend_rambler_setup">Rambler (Google Gemini v3 live streaming)</string>
+    <string name="backend_whisper_setup">Whisper (local server)</string>
+    <string name="backend_rambler_menu">Rambler</string>
+    <string name="backend_whisper_menu">Whisper</string>
+    <string name="backend_rambler_button">Rambler ▾</string>
+    <string name="backend_whisper_button">Whisper ▾</string>
+    <string name="backend_button_description">Transcription backend: %1$s</string>
+    <string name="backend_switched">Switched backend to %1$s.</string>
+    <string name="backend_next_recording">Next recording will use %1$s.</string>
+    <string name="rambler_locale_hint">Rambler language (e.g. en-GB)</string>
+    <string name="save_locale">Save Rambler language</string>
+    <string name="locale_saved">Rambler language saved: %1$s</string>
+    <string name="server_address">Whisper server URL (optional)</string>
     <string name="save_address">Save server URL</string>
+    <string name="clear_address">Clear</string>
     <string name="address_saved">Whisper server URL saved</string>
+    <string name="address_cleared">Whisper server URL cleared (Rambler-only)</string>
     <string name="address_invalid">Enter an HTTP or HTTPS Whisper server URL.</string>
     <string name="allow_microphone">Allow microphone</string>
     <string name="microphone_allowed">Microphone permission is allowed.</string>
@@ -44,6 +59,8 @@
     <string name="microphone_error">Couldn’t record audio. Check microphone access and try again.</string>
     <string name="network_error">Couldn’t transcribe with the Whisper server.</string>
     <string name="whisper_http_error">Whisper server returned HTTP %1$d.</string>
+    <string name="rambler_network_error">Couldn’t transcribe with Rambler. Tap the mic to retry.</string>
+    <string name="rambler_http_error">Rambler returned HTTP %1$d.</string>
     <string name="no_speech">No speech detected.</string>
     <string name="insert_error">Couldn’t insert the transcript in this field.</string>
     <string name="allow_notification">Show Stop in notifications</string>
