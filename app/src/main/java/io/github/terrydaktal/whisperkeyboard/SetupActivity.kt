@@ -1,27 +1,42 @@
 package io.github.terrydaktal.whisperkeyboard
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.roundToInt
 
 class SetupActivity : Activity() {
+    private data class ReturnKeyboardOption(val imeId: String?, val label: String) {
+        override fun toString(): String = label
+    }
+
     private lateinit var microphoneButton: Button
     private var notificationButton: Button? = null
+    private lateinit var statusView: TextView
+    private lateinit var grantCommandView: TextView
+    private lateinit var returnKeyboardSpinner: Spinner
+    private var returnOptions: List<ReturnKeyboardOption> = emptyList()
+    private var updatingReturnSpinner = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,6 +69,20 @@ class SetupActivity : Activity() {
             setPadding(0, dp(8), 0, dp(12))
         })
 
+        statusView = TextView(this).apply {
+            setPadding(0, dp(4), 0, dp(8))
+            setLineSpacing(dp(4).toFloat(), 1f)
+        }
+        content.addView(statusView)
+
+        grantCommandView = TextView(this).apply {
+            setText(R.string.grant_command)
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(0, 0, 0, dp(12))
+        }
+        content.addView(grantCommandView)
+
         microphoneButton = addButton(content, R.string.allow_microphone, ::requestMicrophone)
         if (Build.VERSION.SDK_INT >= 33) {
             notificationButton = addButton(content, R.string.allow_notification) {
@@ -63,9 +92,32 @@ class SetupActivity : Activity() {
         addButton(content, R.string.enable_keyboard) {
             startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }
+        addButton(content, R.string.accessibility_settings) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
         addButton(content, R.string.choose_keyboard) {
             getSystemService(InputMethodManager::class.java).showInputMethodPicker()
         }
+
+        content.addView(TextView(this).apply {
+            setText(R.string.return_keyboard_heading)
+            textSize = 18f
+            setPadding(0, dp(12), 0, dp(4))
+        })
+        returnKeyboardSpinner = Spinner(this).apply {
+            minimumHeight = dp(48)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    if (updatingReturnSpinner) return
+                    val chosen = returnOptions.getOrNull(position) ?: return
+                    KeyboardLayoutStore.setPreferredReturnIme(this@SetupActivity, chosen.imeId)
+                    updateBridgeStatus()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        }
+        content.addView(returnKeyboardSpinner)
 
         val address = EditText(this).apply {
             setSingleLine()
@@ -101,6 +153,8 @@ class SetupActivity : Activity() {
         super.onResume()
         updateMicrophoneButton()
         updateNotificationButton()
+        updateReturnKeyboardSpinner()
+        updateBridgeStatus()
     }
 
     override fun onRequestPermissionsResult(
@@ -115,9 +169,57 @@ class SetupActivity : Activity() {
         }
         if (requestCode != MICROPHONE_REQUEST) return
         updateMicrophoneButton()
+        updateBridgeStatus()
         if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, R.string.microphone_settings, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun updateReturnKeyboardSpinner() {
+        val keyboards = KeyboardLayoutStore.availableReturnKeyboards(this)
+        val options = buildList {
+            add(ReturnKeyboardOption(null, getString(R.string.return_keyboard_auto)))
+            for (ime in keyboards) {
+                add(ReturnKeyboardOption(ime.id, KeyboardLayoutStore.keyboardLabel(this@SetupActivity, ime)))
+            }
+        }
+        returnOptions = options
+        val savedId = KeyboardLayoutStore.preferredReturnIme(this)
+        val selectedIndex = options.indexOfFirst { it.imeId == savedId }.coerceAtLeast(0)
+
+        updatingReturnSpinner = true
+        try {
+            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, options).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            returnKeyboardSpinner.adapter = adapter
+            returnKeyboardSpinner.setSelection(selectedIndex, false)
+        } finally {
+            updatingReturnSpinner = false
+        }
+    }
+
+    private fun updateBridgeStatus() {
+        val accessibilityEnabled = getSystemService(AccessibilityManager::class.java)
+            .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { it.resolveInfo.serviceInfo.name == SwiftKeyBridgeService::class.java.name }
+        val enabled = KeyboardSwitch.enabled(this)
+        val voiceKeyboardEnabled = enabled.any { it.packageName == packageName }
+        val returnLabel = KeyboardLayoutStore.returnKeyboardLabel(this)
+        val canWrite = KeyboardSwitch.canWrite(this)
+        val status = listOf(
+            getString(if (hasMicrophonePermission()) R.string.microphone_allowed else R.string.voice_keyboard_microphone_needed),
+            getString(if (voiceKeyboardEnabled) R.string.voice_keyboard_ready else R.string.enable_voice_keyboard),
+            if (returnLabel != null) {
+                getString(R.string.return_keyboard_status, returnLabel)
+            } else {
+                getString(R.string.return_keyboard_none)
+            },
+            getString(if (accessibilityEnabled) R.string.accessibility_ready else R.string.enable_accessibility),
+            getString(if (canWrite) R.string.permission_ready else R.string.grant_permission),
+        )
+        statusView.text = status.joinToString("\n")
+        grantCommandView.visibility = if (canWrite) View.GONE else View.VISIBLE
     }
 
     private fun requestMicrophone() {

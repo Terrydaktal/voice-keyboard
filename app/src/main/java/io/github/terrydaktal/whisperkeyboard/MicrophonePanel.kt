@@ -7,11 +7,14 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import kotlin.math.PI
 import kotlin.math.cos
@@ -21,6 +24,7 @@ import kotlin.math.sin
 internal class MicrophonePanel(
     context: Context,
     onMicrophone: () -> Unit,
+    onReturnKeyboard: () -> Unit,
 ) : FrameLayout(context) {
     private val waveform = Waveform(context)
     private val fill = GradientDrawable().apply { shape = GradientDrawable.OVAL }
@@ -38,8 +42,9 @@ internal class MicrophonePanel(
         indeterminateTintList = ColorStateList.valueOf(0xFF258B86.toInt())
         visibility = View.GONE
     }
+    private val returnButton: Button
 
-    var keyboardHeight: Int = defaultKeyboardHeight(context)
+    var keyboardHeight: Int = KeyboardLayoutStore.keyboardHeight(context)
         set(value) {
             if (field == value) return
             field = value
@@ -53,11 +58,57 @@ internal class MicrophonePanel(
         addView(waveform, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(progress, LayoutParams(dp(98), dp(98), Gravity.CENTER))
         addView(microphone, LayoutParams(dp(76), dp(76), Gravity.CENTER))
+
+        val controlColor = if (dark) 0xFFA0DCD8.toInt() else 0xFF146B68.toInt()
+        val topBar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        returnButton = Button(context, null, android.R.attr.borderlessButtonStyle).apply {
+            id = R.id.swiftkey_button
+            isAllCaps = false
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(controlColor)
+            setOnClickListener { onReturnKeyboard() }
+        }
+        val returnContainer = FrameLayout(context).apply {
+            addView(
+                returnButton,
+                LayoutParams(LayoutParams.WRAP_CONTENT, dp(48), Gravity.START or Gravity.CENTER_VERTICAL),
+            )
+        }
+        topBar.addView(
+            returnContainer,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+
+        addView(
+            topBar,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP).apply {
+                marginStart = dp(8)
+                marginEnd = dp(8)
+                topMargin = dp(6)
+            },
+        )
+
+        updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(context))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val height = resolveSize(keyboardHeight, heightMeasureSpec)
         super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
+    }
+
+    fun updateReturnKeyboard(label: String?) {
+        if (label.isNullOrBlank()) {
+            returnButton.setText(R.string.return_keyboard_fallback)
+            returnButton.contentDescription = context.getString(R.string.back_to_keyboard_fallback)
+        } else {
+            returnButton.text = context.getString(R.string.return_keyboard_button, label)
+            returnButton.contentDescription = context.getString(R.string.back_to_keyboard, label)
+        }
     }
 
     fun show(label: Int, enabled: Boolean, recording: Boolean, busy: Boolean) {
@@ -116,14 +167,6 @@ internal class MicrophonePanel(
                     centerX + end * dx, centerY + end * dy, paint,
                 )
             }
-        }
-    }
-
-    companion object {
-        private fun defaultKeyboardHeight(context: Context): Int {
-            val metrics = context.resources.displayMetrics
-            val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            return ((if (landscape) 202 else 296) * metrics.density).toInt()
         }
     }
 }

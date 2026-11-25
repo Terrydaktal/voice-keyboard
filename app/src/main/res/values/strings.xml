@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Voice Keyboard</string>
-    <string name="setup_summary">Voice Keyboard starts the first recording when you switch to it and keeps recording while you switch keyboards. Return and tap the microphone to stop and transcribe with your Whisper server.</string>
+    <string name="accessibility_description">Opens Voice Keyboard from your keyboard’s microphone button.</string>
+    <string name="setup_summary">Voice Keyboard opens from your keyboard’s microphone button, matches its height, and returns through the top-left keyboard button. Choose your return keyboard and Whisper server URL below.</string>
+    <string name="return_keyboard_heading">Return keyboard</string>
+    <string name="return_keyboard_auto">Auto (last keyboard)</string>
+    <string name="return_keyboard_status">Back button returns to %1$s.</string>
+    <string name="return_keyboard_none">Enable another keyboard in Android’s keyboard settings to return to it.</string>
+    <string name="return_keyboard_button">← %1$s</string>
+    <string name="return_keyboard_fallback">← Keyboard</string>
+    <string name="back_to_keyboard">Back to %1$s</string>
+    <string name="back_to_keyboard_fallback">Switch keyboard</string>
     <string name="server_address">Whisper server URL (e.g. http://host:5001)</string>
     <string name="save_address">Save server URL</string>
     <string name="address_saved">Whisper server URL saved</string>
@@ -10,8 +19,19 @@
     <string name="microphone_allowed">Microphone permission is allowed.</string>
     <string name="microphone_settings">Allow microphone access in the app’s permissions.</string>
     <string name="enable_keyboard">Open keyboard settings</string>
+    <string name="accessibility_settings">Open accessibility settings</string>
     <string name="choose_keyboard">Choose keyboard</string>
-    <string name="test_field">Tap here to test dictation</string>
+    <string name="voice_keyboard_ready">Voice Keyboard is enabled.</string>
+    <string name="enable_voice_keyboard">Enable Voice Keyboard in Android’s keyboard settings.</string>
+    <string name="voice_keyboard_microphone_needed">Allow microphone access for Voice Keyboard.</string>
+    <string name="accessibility_ready">Voice Keyboard accessibility service is enabled.</string>
+    <string name="enable_accessibility">Enable Voice Keyboard in Android’s accessibility settings for your keyboard’s mic.</string>
+    <string name="permission_ready">Keyboard switching permission is granted.</string>
+    <string name="grant_permission">Grant keyboard switching permission with ADB for your keyboard’s mic:</string>
+    <string name="grant_command" translatable="false">adb shell pm grant io.github.terrydaktal.whisperkeyboard android.permission.WRITE_SECURE_SETTINGS</string>
+    <string name="switch_failed">Android could not switch keyboards.</string>
+    <string name="editor_unavailable">The keyboard did not reopen. Tap the text field and try again.</string>
+    <string name="test_field">Tap here to test dictation or your keyboard’s microphone</string>
     <string name="start_recording">Start recording</string>
     <string name="stop_recording">Stop recording</string>
     <string name="transcribing">Transcribing…</string>

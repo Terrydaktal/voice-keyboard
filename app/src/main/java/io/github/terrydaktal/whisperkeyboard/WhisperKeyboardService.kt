@@ -2,15 +2,19 @@ package io.github.terrydaktal.whisperkeyboard
 
 import android.Manifest
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.InputType
+import android.util.Log
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import io.github.terrydaktal.whisperkeyboard.WhisperRecordingService.Phase
 
@@ -22,6 +26,11 @@ class WhisperKeyboardService : InputMethodService() {
     private var autoStartOnOpen = true
     private var passwordField = false
     private var submittedFrom: InputConnection? = null
+    private val layoutPreferences by lazy { KeyboardLayoutStore.preferences(this) }
+    private val onLayoutChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
+        panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+    }
 
     private val onStateChanged: (WhisperRecordingService.Snapshot) -> Unit = { state ->
         if (state.phase == Phase.STARTING) autoStartOnOpen = false
@@ -38,10 +47,16 @@ class WhisperKeyboardService : InputMethodService() {
         super.onCreate()
         WhisperRecordingService.listeners.add(onStateChanged)
         WhisperRecordingService.levelListeners.add(onAudioLevel)
+        layoutPreferences.registerOnSharedPreferenceChangeListener(onLayoutChanged)
     }
 
-    override fun onCreateInputView(): View = MicrophonePanel(this, ::handleMic).also {
+    override fun onCreateInputView(): View = MicrophonePanel(
+        this,
+        ::handleMic,
+        ::returnToConfiguredKeyboard,
+    ).also {
         panel = it
+        it.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
         render(WhisperRecordingService.snapshot.phase)
     }
 
@@ -52,6 +67,8 @@ class WhisperKeyboardService : InputMethodService() {
         val opening = !viewActive || !restarting
         viewActive = true
         passwordField = isPassword(info.inputType)
+        panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
+        panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
         render(WhisperRecordingService.snapshot.phase)
         if (!opening) return
 
@@ -101,6 +118,7 @@ class WhisperKeyboardService : InputMethodService() {
         closeView()
         WhisperRecordingService.listeners.remove(onStateChanged)
         WhisperRecordingService.levelListeners.remove(onAudioLevel)
+        layoutPreferences.unregisterOnSharedPreferenceChangeListener(onLayoutChanged)
         super.onDestroy()
     }
 
@@ -134,6 +152,25 @@ class WhisperKeyboardService : InputMethodService() {
             Phase.RESULT -> insertTranscript(showError = true)
             Phase.STARTING, Phase.TRANSCRIBING -> Unit
         }
+    }
+
+    private fun returnToConfiguredKeyboard() {
+        val keyboards = getSystemService(InputMethodManager::class.java)
+        val target = KeyboardLayoutStore.resolveReturnKeyboard(this)
+        if (target != null) {
+            try {
+                switchInputMethod(target.id)
+                if (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) == target.id) {
+                    closeView()
+                    WhisperRecordingService.deferInsertion()
+                    autoStartOnOpen = true
+                    return
+                }
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "Could not switch to ${target.id}", error)
+            }
+        }
+        keyboards.showInputMethodPicker()
     }
 
     private fun insertTranscript(showError: Boolean) {
@@ -184,6 +221,7 @@ class WhisperKeyboardService : InputMethodService() {
     }
 
     private companion object {
+        const val TAG = "WhisperKeyboard"
         const val WINDOW_VISIBLE_SETTLE_MS = 180L
     }
 }
