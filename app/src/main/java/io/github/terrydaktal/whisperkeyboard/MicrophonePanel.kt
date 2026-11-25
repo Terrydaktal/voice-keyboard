@@ -1,5 +1,6 @@
 package io.github.terrydaktal.whisperkeyboard
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -7,8 +8,12 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.os.Handler
+import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
@@ -26,7 +31,11 @@ internal class MicrophonePanel(
     onMicrophone: () -> Unit,
     onReturnKeyboard: () -> Unit,
     onBackendMenu: (View) -> Unit,
+    onDeleteChar: () -> Unit,
+    onDeleteWord: () -> Unit,
+    onEnter: () -> Unit,
 ) : FrameLayout(context) {
+    private val main = Handler(Looper.getMainLooper())
     private val waveform = Waveform(context)
     private val fill = GradientDrawable().apply { shape = GradientDrawable.OVAL }
     private val microphone = ImageButton(context).apply {
@@ -45,6 +54,20 @@ internal class MicrophonePanel(
     }
     private val returnButton: Button
     private val backendButton: Button
+    private val backspaceButton: ImageButton
+    private val enterButton: ImageButton
+
+    private var repeatingWordDelete = false
+    private var backspaceTouchActive = false
+    private val wordDeleteRepeater = object : Runnable {
+        override fun run() {
+            if (!backspaceTouchActive) return
+            repeatingWordDelete = true
+            backspaceButton.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            onDeleteWord()
+            main.postDelayed(this, WORD_DELETE_REPEAT_MS)
+        }
+    }
 
     var keyboardHeight: Int = KeyboardLayoutStore.keyboardHeight(context)
         set(value) {
@@ -107,8 +130,121 @@ internal class MicrophonePanel(
             },
         )
 
+        val keyBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(10).toFloat()
+            setColor(if (dark) 0xFF282C32.toInt() else 0xFFDCE5E5.toInt())
+        }
+        val keyRipple = RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),
+            keyBg,
+            null,
+        )
+        val slopPx = dp(16).toFloat()
+        backspaceButton = object : ImageButton(context) {
+            override fun performClick(): Boolean {
+                super.performClick()
+                onDeleteChar()
+                return true
+            }
+        }.apply {
+            id = R.id.backspace_button
+            background = keyRipple
+            setImageResource(R.drawable.ic_backspace)
+            imageTintList = ColorStateList.valueOf(if (dark) 0xFFE3ECEC.toInt() else 0xFF1F2B2B.toInt())
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            contentDescription = context.getString(R.string.backspace_description)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            @SuppressLint("ClickableViewAccessibility")
+            setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        view.isPressed = true
+                        backspaceTouchActive = true
+                        repeatingWordDelete = false
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        main.removeCallbacks(wordDeleteRepeater)
+                        main.postDelayed(wordDeleteRepeater, WORD_DELETE_INITIAL_DELAY_MS)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val inside = event.x >= -slopPx &&
+                            event.x <= view.width + slopPx &&
+                            event.y >= -slopPx &&
+                            event.y <= view.height + slopPx
+                        if (!inside && backspaceTouchActive) {
+                            stopBackspaceHold()
+                            view.isPressed = false
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val shouldTap = backspaceTouchActive && !repeatingWordDelete
+                        stopBackspaceHold()
+                        view.isPressed = false
+                        if (shouldTap) view.performClick()
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        stopBackspaceHold()
+                        view.isPressed = false
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        val enterBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(10).toFloat()
+            setColor(0xFF146B68.toInt())
+        }
+        val enterRipple = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), enterBg, null)
+        enterButton = ImageButton(context).apply {
+            id = R.id.enter_button
+            background = enterRipple
+            setImageResource(R.drawable.ic_enter)
+            imageTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            contentDescription = context.getString(R.string.enter_description)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setOnClickListener { view ->
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                onEnter()
+            }
+        }
+
+        // Right-edge action column matching SwiftKey: Backspace on row 3, Enter on bottom-right row 4.
+        val rightKeys = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            addView(
+                backspaceButton,
+                LinearLayout.LayoutParams(dp(58), dp(48)).apply {
+                    bottomMargin = dp(10)
+                },
+            )
+            addView(
+                enterButton,
+                LinearLayout.LayoutParams(dp(58), dp(48)),
+            )
+        }
+        addView(
+            rightKeys,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
+                marginEnd = dp(10)
+                bottomMargin = dp(8)
+            },
+        )
+
         updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(context))
         updateBackend(DictationSettings.backend(context))
+    }
+
+    override fun onDetachedFromWindow() {
+        stopBackspaceHold()
+        super.onDetachedFromWindow()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -134,6 +270,10 @@ internal class MicrophonePanel(
         )
     }
 
+    fun updateEnterAction(labelRes: Int) {
+        enterButton.contentDescription = context.getString(labelRes)
+    }
+
     fun show(label: Int, enabled: Boolean, recording: Boolean, busy: Boolean) {
         microphone.contentDescription = context.getString(label)
         microphone.isEnabled = enabled
@@ -145,6 +285,12 @@ internal class MicrophonePanel(
     }
 
     fun level(value: Float) = waveform.level(value)
+
+    private fun stopBackspaceHold() {
+        backspaceTouchActive = false
+        repeatingWordDelete = false
+        main.removeCallbacks(wordDeleteRepeater)
+    }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
@@ -191,5 +337,10 @@ internal class MicrophonePanel(
                 )
             }
         }
+    }
+
+    companion object {
+        private const val WORD_DELETE_INITIAL_DELAY_MS = 380L
+        private const val WORD_DELETE_REPEAT_MS = 140L
     }
 }

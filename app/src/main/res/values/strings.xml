@@ -11,6 +11,13 @@
     <string name="return_keyboard_fallback">← Keyboard</string>
     <string name="back_to_keyboard">Back to %1$s</string>
     <string name="back_to_keyboard_fallback">Switch keyboard</string>
+    <string name="backspace_description">Backspace</string>
+    <string name="enter_description">Enter</string>
+    <string name="enter_send">Send</string>
+    <string name="enter_search">Search</string>
+    <string name="enter_go">Go</string>
+    <string name="enter_next">Next</string>
+    <string name="enter_done">Done</string>
     <string name="backend_heading">Transcription backend</string>
     <string name="backend_rambler_setup">Rambler (Google Gemini v3 live streaming)</string>
     <string name="backend_whisper_setup">Whisper (local server)</string>

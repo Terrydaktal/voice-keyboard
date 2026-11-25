@@ -60,9 +60,13 @@ class WhisperKeyboardService : InputMethodService() {
         ::handleMic,
         ::returnToConfiguredKeyboard,
         ::showBackendMenu,
+        ::deleteCharacter,
+        ::deleteWord,
+        ::pressEnter,
     ).also {
         panel = it
         it.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+        it.updateEnterAction(EnterAction.labelRes(currentInputEditorInfo))
         refreshBackendButton()
         render(WhisperRecordingService.snapshot.phase)
     }
@@ -76,6 +80,7 @@ class WhisperKeyboardService : InputMethodService() {
         passwordField = isPassword(info.inputType)
         panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
         panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
+        panel?.updateEnterAction(EnterAction.labelRes(info))
         refreshBackendButton()
         render(WhisperRecordingService.snapshot.phase)
         if (!opening) return
@@ -143,6 +148,18 @@ class WhisperKeyboardService : InputMethodService() {
     private fun showBackendMenu(anchor: View) {
         val recording = WhisperRecordingService.snapshot.phase == Phase.RECORDING
         DictationSettings.showBackendMenu(anchor, isRecording = recording)
+    }
+
+    private fun deleteCharacter() {
+        BackspaceDeletion.deleteChar(currentInputConnection)
+    }
+
+    private fun deleteWord() {
+        BackspaceDeletion.deleteWord(currentInputConnection)
+    }
+
+    private fun pressEnter() {
+        EnterAction.perform(currentInputConnection, currentInputEditorInfo)
     }
 
     private fun handleMic() {
