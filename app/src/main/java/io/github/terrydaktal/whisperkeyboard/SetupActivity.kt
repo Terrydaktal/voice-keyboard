@@ -3,6 +3,9 @@ package io.github.terrydaktal.whisperkeyboard
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -42,6 +45,7 @@ class SetupActivity : Activity() {
     private lateinit var clearAddressButton: Button
     private lateinit var pendingStatusView: TextView
     private lateinit var clearPendingButton: Button
+    private lateinit var diagnosticsSummaryView: TextView
     private var ramblerRadioId = 0
     private var whisperRadioId = 0
     private var returnOptions: List<ReturnKeyboardOption> = emptyList()
@@ -49,6 +53,7 @@ class SetupActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DictationDiagnostics.init(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(16), dp(20), dp(20))
@@ -238,6 +243,55 @@ class SetupActivity : Activity() {
             minLines = 2
             setHint(R.string.test_field)
         })
+
+        content.addView(TextView(this).apply {
+            setText(R.string.diagnostics_heading)
+            textSize = 18f
+            setPadding(0, dp(16), 0, dp(4))
+        })
+        diagnosticsSummaryView = TextView(this).apply {
+            typeface = Typeface.MONOSPACE
+            textSize = 12f
+            setTextIsSelectable(true)
+            setPadding(0, 0, 0, dp(8))
+        }
+        content.addView(diagnosticsSummaryView)
+
+        val diagActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        diagActions.addView(
+            Button(this).apply {
+                setText(R.string.diagnostics_view_log)
+                setOnClickListener { showDiagnosticsDialog() }
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        diagActions.addView(
+            Button(this).apply {
+                setText(R.string.diagnostics_copy_report)
+                setOnClickListener {
+                    val report = DictationDiagnostics.formatHumanReport(this@SetupActivity, maxEvents = 150)
+                    val clipboard = getSystemService(ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Voice Keyboard Diagnostics", report))
+                    Toast.makeText(this@SetupActivity, R.string.diagnostics_copied, Toast.LENGTH_SHORT).show()
+                }
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        diagActions.addView(
+            Button(this).apply {
+                setText(R.string.diagnostics_clear_log)
+                setOnClickListener {
+                    DictationDiagnostics.clearLogs(this@SetupActivity)
+                    updateDiagnosticsSummary()
+                    Toast.makeText(this@SetupActivity, R.string.diagnostics_cleared, Toast.LENGTH_SHORT).show()
+                }
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        content.addView(diagActions)
+
         content.requestFocus()
         if (intent.getBooleanExtra(REQUEST_MICROPHONE, false) && savedInstanceState == null) {
             requestMicrophone()
@@ -252,6 +306,7 @@ class SetupActivity : Activity() {
         updateBridgeStatus()
         updateBackendControls()
         updatePendingControls()
+        updateDiagnosticsSummary()
     }
 
     override fun onPause() {
@@ -361,6 +416,32 @@ class SetupActivity : Activity() {
         pendingStatusView.visibility = View.VISIBLE
         clearPendingButton.text = getString(R.string.clear_pending_button, count)
         clearPendingButton.visibility = View.VISIBLE
+    }
+
+    private fun updateDiagnosticsSummary() {
+        diagnosticsSummaryView.text = DictationDiagnostics.formatCompactSummary(this)
+    }
+
+    private fun showDiagnosticsDialog() {
+        val report = DictationDiagnostics.formatHumanReport(this, maxEvents = 120)
+        val textView = TextView(this).apply {
+            text = report
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val scroll = ScrollView(this).apply { addView(textView) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.diagnostics_heading)
+            .setView(scroll)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.diagnostics_copy_report) { _, _ ->
+                val clipboard = getSystemService(ClipboardManager::class.java)
+                clipboard.setPrimaryClip(ClipData.newPlainText("Voice Keyboard Diagnostics", report))
+                Toast.makeText(this, R.string.diagnostics_copied, Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun requestMicrophone() {

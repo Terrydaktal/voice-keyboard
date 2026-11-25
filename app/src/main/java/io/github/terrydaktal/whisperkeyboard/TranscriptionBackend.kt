@@ -12,8 +12,8 @@ internal interface LiveTranscriptionSession {
 internal interface TranscriptionBackend {
     val id: String
     fun validateBeforeStart(context: Context): Int?
-    fun startLiveSession(context: Context): LiveTranscriptionSession?
-    fun transcribeWav(context: Context, audio: File, durationMs: Long): String
+    fun startLiveSession(context: Context, opId: String = ""): LiveTranscriptionSession?
+    fun transcribeWav(context: Context, audio: File, durationMs: Long, opId: String = ""): String
     fun formatError(context: Context, error: Throwable): String
 }
 
@@ -23,12 +23,12 @@ internal object WhisperBackend : TranscriptionBackend {
     override fun validateBeforeStart(context: Context): Int? =
         if (WhisperEndpoint.isConfigured(context)) null else R.string.address_invalid
 
-    override fun startLiveSession(context: Context): LiveTranscriptionSession? = null
+    override fun startLiveSession(context: Context, opId: String): LiveTranscriptionSession? = null
 
-    override fun transcribeWav(context: Context, audio: File, durationMs: Long): String {
+    override fun transcribeWav(context: Context, audio: File, durationMs: Long, opId: String): String {
         val endpoint = WhisperEndpoint.parse(WhisperEndpoint.savedAddress(context))
             ?: throw IllegalStateException("Whisper server URL is not configured.")
-        return WhisperEndpoint.transcribe(endpoint, audio, durationMs)
+        return WhisperEndpoint.transcribe(endpoint, audio, durationMs, opId)
     }
 
     override fun formatError(context: Context, error: Throwable): String = when (error) {

@@ -38,7 +38,20 @@ internal object WhisperEndpoint {
     private fun preferences(context: Context) =
         context.getSharedPreferences("whisper_keyboard", Context.MODE_PRIVATE)
 
-    fun transcribe(endpoint: URL, recording: File, durationMs: Long): String {
+    fun transcribe(endpoint: URL, recording: File, durationMs: Long, opId: String = ""): String {
+        val startedNanos = System.nanoTime()
+        val safeUrl = DiagnosticFlightRecorder.sanitizeUrlForLog(endpoint.toExternalForm())
+        DictationDiagnostics.counters.whisperCallsStarted.incrementAndGet()
+        DictationDiagnostics.record(
+            category = "whisper",
+            event = "request_start",
+            opId = opId,
+            fields = mapOf(
+                "url" to safeUrl,
+                "audioBytes" to recording.length(),
+                "durationMs" to durationMs,
+            ),
+        )
         val connection = endpoint.openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "POST"
@@ -56,11 +69,48 @@ internal object WhisperEndpoint {
             }
 
             val status = connection.responseCode
-            if (status !in 200..299) throw WhisperHttpException(status)
+            val elapsedMs = (System.nanoTime() - startedNanos) / 1_000_000L
+            if (status !in 200..299) {
+                val err = WhisperHttpException(status)
+                DictationDiagnostics.counters.whisperCallsFailed.incrementAndGet()
+                DictationDiagnostics.recordError(
+                    stage = "whisper_http",
+                    code = "HTTP_$status",
+                    error = err,
+                    opId = opId,
+                    extraFields = mapOf("url" to safeUrl, "elapsedMs" to elapsedMs),
+                )
+                throw err
+            }
             val json = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             val text = JSONObject(json).opt("text") as? String
                 ?: throw IOException("Whisper response is missing the transcript.")
-            return text.trim()
+            val trimmed = text.trim()
+            DictationDiagnostics.counters.whisperCallsSucceeded.incrementAndGet()
+            DictationDiagnostics.record(
+                category = "whisper",
+                event = "response_ok",
+                opId = opId,
+                fields = mapOf(
+                    "httpStatus" to status,
+                    "elapsedMs" to elapsedMs,
+                    "transcriptLen" to trimmed.length,
+                ),
+            )
+            return trimmed
+        } catch (error: Throwable) {
+            if (error !is WhisperHttpException) {
+                val elapsedMs = (System.nanoTime() - startedNanos) / 1_000_000L
+                DictationDiagnostics.counters.whisperCallsFailed.incrementAndGet()
+                DictationDiagnostics.recordError(
+                    stage = "whisper_io",
+                    code = error.javaClass.simpleName,
+                    error = error,
+                    opId = opId,
+                    extraFields = mapOf("url" to safeUrl, "elapsedMs" to elapsedMs),
+                )
+            }
+            throw error
         } finally {
             connection.disconnect()
         }

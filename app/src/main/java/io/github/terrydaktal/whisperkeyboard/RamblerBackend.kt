@@ -8,8 +8,8 @@ internal object RamblerBackend : TranscriptionBackend {
 
     override fun validateBeforeStart(context: Context): Int? = null
 
-    override fun startLiveSession(context: Context): LiveTranscriptionSession {
-        val delegate = RamblerLiveSession(DictationSettings.locale(context))
+    override fun startLiveSession(context: Context, opId: String): LiveTranscriptionSession {
+        val delegate = RamblerLiveSession(DictationSettings.locale(context), opId = opId)
         return object : LiveTranscriptionSession {
             override fun writePcm(buffer: ByteArray, count: Int) = delegate.writePcm(buffer, count)
             override fun finish(): String = delegate.finish()
@@ -17,8 +17,8 @@ internal object RamblerBackend : TranscriptionBackend {
         }
     }
 
-    override fun transcribeWav(context: Context, audio: File, durationMs: Long): String =
-        RamblerLiveSession.transcribeWavFile(audio, DictationSettings.locale(context))
+    override fun transcribeWav(context: Context, audio: File, durationMs: Long, opId: String): String =
+        RamblerLiveSession.transcribeWavFile(audio, DictationSettings.locale(context), opId = opId)
 
     override fun formatError(context: Context, error: Throwable): String = when (error) {
         is RamblerHttpException -> context.getString(R.string.rambler_http_error, error.status)

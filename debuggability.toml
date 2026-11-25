@@ -1,0 +1,311 @@
+schema_version = 6
+template = false
+profile = "stateful"
+owner = "Terrydaktal"
+expected_failure_modes = [
+  "Rambler S3 HTTP/2 stream premature EOF or non-zero gRPC trailer status returning empty transcript",
+  "Rambler S3 segment await timeout after recording stop",
+  "Android MediaCodec audio/opus encoder failure or incomplete EOS drain",
+  "InputConnection refresh or editor switch blocking commitText delivery",
+  "Microphone foreground service start failure or AudioRecord error",
+  "Local Whisper HTTP endpoint timeout or non-2xx response",
+  "App crash or logcat rotation erasing live failure evidence before inspection",
+]
+
+[architecture]
+state_owners = [
+  "WhisperRecordingService owns dictation Phase state machine and active Session",
+  "PendingRecordingStore owns persistent FIFO WAV queue in filesDir/pending_dictations",
+  "WhisperKeyboardService owns IME viewActive state, EditorIdentity, and commitText delivery",
+  "RamblerLiveSession owns rolling 180s/240s S3 segments and Ogg/Opus backup buffers",
+  "DictationDiagnostics owns bounded ring buffer, async rotating JSONL writer, and snapshot state",
+]
+mutation_points = [
+  "WhisperRecordingService.publish",
+  "WhisperKeyboardService.insertTranscript",
+  "PendingRecordingStore.enqueue",
+  "PendingRecordingStore.delete",
+  "RamblerLiveSession.Segment.runS3Loop",
+]
+side_effect_boundaries = [
+  "WavRecording (AudioRecord + WAV file)",
+  "OpusOggEncoder (Android MediaCodec audio/opus)",
+  "RamblerS3Client (OkHttp HTTP/2 duplex S3Bidi)",
+  "WhisperEndpoint (HttpURLConnection POST /transcribe_raw)",
+  "InputMethodService.currentInputConnection.commitText",
+]
+fault_containment = "Active audio is promoted to filesDir/pending_dictations before network finalization; Rambler live stream errors, premature EOF, or empty live responses trigger buffered Ogg retry, and unrecovered failures remain queued for retry."
+
+[errors]
+typed_codes = "implemented_tested"
+preserves_source_chain = "implemented_tested"
+preserves_first_failure = "implemented_tested"
+causal_ids = ["opId (rec-NNNN / retry-NNNN)", "segmentIndex (seg)", "monotonic seq"]
+
+[invariants]
+release_checks = [
+  "RamblerS3Client.validateGrpcStatus rejects non-zero gRPC status trailers instead of returning empty speech",
+  "RamblerLiveSession.finish fails explicitly when doneLatch.await times out instead of returning empty speech",
+  "RamblerS3Client treats live premature reader EOF before end_of_data with empty text as an IOException",
+  "PendingRecordingStore deletes queued WAVs only after commitText returns true or clean empty speech",
+]
+progress_rules = [
+  "RamblerS3Client emits stream_progress heartbeat every 10s while streaming",
+  "RamblerLiveSession rolls segments at 180s silence pause or 240s hard limit",
+  "Auto-retry uses exponential backoff 3s..30s and stops when keyboard is hidden",
+]
+resource_balances = [
+  "sessionsStarted vs sessionsCompleted + sessionsFailed + sessionsEmptySpeech + sessionsAborted",
+  "s3CallsStarted vs s3CallsSucceeded + s3CallsFailed",
+  "queueEnqueued vs queueDeleted + queueEvicted",
+  "commitsAttempted vs commitsSucceeded + commitsFailed",
+]
+
+[configuration]
+effective_config = "implemented_untested"
+decision_provenance = "implemented_untested"
+dynamic_change_history = "planned"
+
+[build]
+identity = "PackageInfo versionName/versionCode + Android release + device model emitted in process_init and snapshot JSON"
+exact_artifact_retention = "planned"
+symbols_and_unwind = "not_applicable"
+source_retrieval = "planned"
+
+[artifacts]
+cache_identity = "not_applicable"
+atomic_publication = "not_applicable"
+generation_manifest = "not_applicable"
+
+[live]
+capabilities_command = "adb shell dumpsys activity service io.github.terrydaktal.whisperkeyboard/.WhisperRecordingService"
+snapshot_command = "adb shell dumpsys activity service io.github.terrydaktal.whisperkeyboard/.WhisperRecordingService"
+snapshot_consistency = "best-effort"
+independent_of_failure_loop = "implemented_tested"
+capture_timeout_ms = 1000
+
+[history]
+flight_recorder = "implemented_tested"
+schema = "DictationDiagnostics JSONL schema=1 (seq, tsWallMs, tsMonoMs, level, thread, opId, cat, event, fields)"
+capacity_events = 512
+drop_and_overwrite_reporting = "implemented_tested"
+
+[audit_trail]
+mutation_audit = "not_applicable"
+event_schema = "not_applicable"
+actor_writer_and_reason = "not_applicable"
+attribution_policy = "not_applicable"
+transaction_binding = "not_applicable"
+attempted_write_policy = "not_applicable"
+provenance_and_deduplication = "not_applicable"
+change_representation = "not_applicable"
+direct_write_coverage = "not_applicable"
+tamper_evidence = "not_applicable"
+retention_and_access = "not_applicable"
+query_and_export = "not_applicable"
+sink_failure_policy = "not_applicable"
+cost_and_backpressure = "not_applicable"
+assurance_test = "not_applicable"
+max_event_bytes = 0
+max_added_commit_p99_ms = 0.0
+max_throughput_regression_percent = 0.0
+max_audit_wait_ms = 0
+max_storage_bytes_per_day = 0
+
+[concurrency]
+task_registry = "waived"
+lock_wait_introspection = "not_applicable"
+cross_process_correlation = "not_applicable"
+
+[resources]
+ownership_reporting = "implemented_untested"
+declared_budgets = [
+  "PendingRecordingStore max 20 files / 50 MiB",
+  "DiagnosticFlightRecorder ring 512 events / disk 512 KiB rotating JSONL",
+]
+high_water_reporting = "planned"
+
+[reproduction]
+recorded_inputs = ["Failed dictation WAV clips preserved in filesDir/pending_dictations"]
+replay_command = "Retry pending clip from Voice Keyboard Retry button or pull WAV via adb run-as"
+fault_injection = ["Synthetic gRPC status validation and editor target mismatch in DictationDiagnosticsTest"]
+
+[postmortem]
+crash_capture = "implemented_tested"
+includes_history = "implemented_tested"
+oom_or_external_kill_detection = "planned"
+retention_policy = "Two rotating files (events.jsonl + events.1.jsonl), 256 KiB each (512 KiB cap) in private filesDir/diagnostics"
+
+[recovery]
+pre_repair_evidence = "implemented_untested"
+restart_or_fallback_history = "implemented_untested"
+last_failure_retention = "implemented_tested"
+
+[domain]
+state_dump = "WhisperRecordingService.dump and WhisperKeyboardService.dump emit JSON snapshot + recent ring events"
+cross_boundary_ids = ["opId", "seg"]
+
+[security]
+authorization = "Android app-private internal storage (filesDir/diagnostics) accessible only to app UI or ADB run-as/dumpsys"
+redaction = [
+  "Forbidden keys (transcript, text, hypothesis, partial, final, api_key, authorization, password, secret, token, cookie)",
+  "Regex redaction of Google API keys (AIza...), bearer/secret key-value pairs, and URL userinfo credentials",
+]
+max_bundle_bytes = 524288
+retention_days = 7
+
+[budgets]
+measurement_status = "planned"
+steady_cpu_percent = 0.2
+steady_memory_bytes = 524288
+activated_cpu_percent = 0.5
+
+[deployment_modes]
+minimal_release = "not_applicable"
+observable_release = "app:assembleDebug and app:assembleRelease include bounded always-on DictationDiagnostics baseline"
+global_runtime_switch = "DictationDiagnostics.setEnabled(Boolean)"
+per_category_switches = ["DictationDiagnostics.setCategoryEnabled(category, Boolean) for lifecycle, state, audio, encoder, s3, whisper, queue, ime, error"]
+diagnostic_builds = ["app:assembleDebug"]
+optional_diagnostics_default_enabled = false
+lazy_buffer_allocation = true
+lazy_helper_start = true
+
+[performance_isolation]
+preserves_release_optimization = true
+compile_time_exclusion_supported = false
+critical_hot_paths = ["WavRecording.record PCM capture loop", "OpusOggEncoder.writePcm"]
+disabled_hot_path_extra_instructions = 0
+baseline_comparison = "No per-PCM-chunk or per-Opus-packet logging; only atomic counters updated on hot paths"
+minimal_mode_test = "not_applicable"
+runtime_disabled_test = "DictationDiagnosticsTest.runtimeDisableAndCategorySwitchesSkipRecordingAndDiskWrites"
+always_on_test = "DictationDiagnosticsTest"
+activated_mode_tests = ["not_applicable"]
+
+[artifact_isolation]
+single_semantic_source = true
+release_minimal_erasure = "not_applicable"
+release_minimal_runtime_diagnostic_checks = 0
+semantic_source_and_generation = "Single Kotlin source set under app/src/main"
+performance_closure = ["WavRecording.record", "OpusOggEncoder.writePcm"]
+assurance_artifacts = ["app/build/outputs/apk/debug/app-debug.apk"]
+release_minimal_postimages = ["not_applicable"]
+permitted_release_facilities = ["DictationDiagnostics always-on bounded ring + rotating JSONL"]
+forbidden_release_markers = ["not_applicable"]
+postimage_absence_test = "not_applicable"
+runtime_check_absence_test = "not_applicable"
+dependency_absence_test = "not_applicable"
+semantic_equivalence_test = "not_applicable"
+artifact_provenance_test = "not_applicable"
+
+[instrumentation_policy]
+facility_admission = "required"
+default_class = "always_on"
+max_steady_cpu_percent = 0.5
+max_steady_memory_bytes = 1048576
+max_event_rate_per_second = 50
+max_disk_bytes_per_day = 524288
+max_snapshot_pause_ms = 50
+max_activation_ttl_seconds = 300
+max_activated_capture_bytes = 524288
+max_minimal_cpu_regression_percent = 0.0
+max_runtime_disabled_cpu_regression_percent = 0.1
+max_steady_p99_latency_regression_percent = 1.0
+max_activated_cpu_percent = 2.0
+synchronous_hot_path_io = false
+global_contended_event_index = false
+require_overhead_test = true
+promotion_requires_measurement = true
+
+[assurance]
+contract_test = "DictationDiagnosticsTest"
+synthetic_scenarios = [
+  "ring_overflow_and_overwrite_accounting",
+  "jsonl_rotation_and_persisted_tail",
+  "canary_secret_and_transcript_redaction",
+  "first_error_preservation_and_cause_chain",
+  "grpc_trailer_status_validation",
+  "refreshed_input_connection_editor_identity",
+  "dumpsys_snapshot_and_events_dump",
+]
+symbolization_test = "not_applicable"
+redaction_test = "DictationDiagnosticsTest.redactsCanarySecretsAndForbiddenTranscriptFields"
+overhead_test = "waived"
+snapshot_test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents"
+
+[exceptions]
+items = [
+  { control = "build.symbols_and_unwind", disposition = "not_applicable", reason = "Pure Kotlin/ART Android APK with no native JNI/NDK code or custom unwinder" },
+  { control = "artifacts.cache_identity", disposition = "not_applicable", reason = "No derived artifact or memoization cache persisted across sessions" },
+  { control = "artifacts.atomic_publication", disposition = "not_applicable", reason = "No multi-file/table atomic dataset publication; single WAV rename in PendingRecordingStore" },
+  { control = "artifacts.generation_manifest", disposition = "not_applicable", reason = "No multi-file generated asset bundles" },
+  { control = "audit_trail.mutation_audit", disposition = "not_applicable", reason = "Personal single-user IME with disposable transient audio recordings and no regulated or shared persistent ledger" },
+  { control = "audit_trail.direct_write_coverage", disposition = "not_applicable", reason = "No database or durable audited ledger" },
+  { control = "concurrency.task_registry", disposition = "waived", reason = "Small fixed set of named threads (voice-kb-worker, voice-kb-diag-writer, per-segment encoder/S3) tracked via activeSegmentSummary and opId" },
+  { control = "concurrency.lock_wait_introspection", disposition = "not_applicable", reason = "Single-thread worker executor and short lock-free atomic snapshots; no complex lock hierarchy" },
+  { control = "concurrency.cross_process_correlation", disposition = "not_applicable", reason = "Single-process Android IME application" },
+  { control = "artifact_isolation.release_minimal_erasure", disposition = "not_applicable", reason = "Personal sideloaded APK ships only the bounded always-on baseline; no separate stripped release-minimal tier" },
+]
+
+[controls]
+"architecture.state_owners" = { status = "implemented_tested", reason = "Explicit owners documented and exercised by unit tests", implementation = "WhisperRecordingService, WhisperKeyboardService, PendingRecordingStore, RamblerLiveSession, DictationDiagnostics", test = "DictationDiagnosticsTest, PendingRecordingStoreTest" }
+"architecture.mutation_points" = { status = "implemented_tested", reason = "State transitions routed through publish/insertTranscript/enqueue/delete", implementation = "WhisperRecordingService.publish, WhisperKeyboardService.insertTranscript, PendingRecordingStore", test = "DictationDiagnosticsTest, PendingRecordingStoreTest" }
+"architecture.side_effect_boundaries" = { status = "implemented_tested", reason = "Audio capture, Opus encoding, S3 gRPC, Whisper HTTP, and InputConnection isolated in dedicated classes", implementation = "WavRecording, OpusOggEncoder, RamblerS3Client, WhisperEndpoint, WhisperKeyboardService", test = "DictationDiagnosticsTest, RamblerS3ProtoTest, OggOpusMuxerTest" }
+"architecture.fault_containment" = { status = "implemented_tested", reason = "WAV promotion before network call + buffered Ogg retry on live S3 failure", implementation = "WhisperRecordingService.recordingFinished, RamblerLiveSession.Segment.runS3Loop", test = "PendingRecordingStoreTest, DictationDiagnosticsTest" }
+"errors.causal_ids" = { status = "implemented_tested", reason = "Per-session opId and segmentIndex correlate audio, encoder, S3, queue, and commitText events", implementation = "DictationDiagnostics.nextOpId", test = "DictationDiagnosticsTest" }
+"invariants.release_checks" = { status = "implemented_tested", reason = "Non-zero gRPC trailers, premature live EOF, and segment timeouts fail explicitly instead of silently deleting audio", implementation = "RamblerS3Client.validateGrpcStatus, RamblerLiveSession.finish", test = "DictationDiagnosticsTest.validatesGrpcTrailerStatuses" }
+"invariants.progress_rules" = { status = "implemented_untested", reason = "10s S3 heartbeat and 180s/240s segment roll implemented in runtime streaming loop", implementation = "RamblerS3Client.writeOggChunk, RamblerLiveSession.writePcm", test = "planned" }
+"invariants.resource_balances" = { status = "implemented_tested", reason = "Atomic lifecycle counters track session, S3, Whisper, queue, and commit balances", implementation = "DiagnosticFlightRecorder.Counters", test = "DictationDiagnosticsTest" }
+"build.identity" = { status = "implemented_tested", reason = "PackageInfo versionName/versionCode + device model included in process_init and snapshot JSON", implementation = "DictationDiagnostics.init, DictationDiagnostics.buildSnapshotJson", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"live.capabilities_command" = { status = "implemented_tested", reason = "dumpsys service dump outputs schema version, build identity, and live state", implementation = "WhisperRecordingService.dump, WhisperKeyboardService.dump", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"live.snapshot_command" = { status = "implemented_tested", reason = "Binder-thread dumpsys and in-app SetupActivity Diagnostics panel read lock-free state snapshots", implementation = "DictationDiagnostics.dumpToWriter, SetupActivity.showDiagnosticsDialog", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"history.schema" = { status = "implemented_tested", reason = "Versioned JSONL schema=1 with monotonic seq, wall/mono timestamps, opId, category, event, bounded fields", implementation = "DiagnosticFlightRecorder.Event.toJsonLine", test = "DictationDiagnosticsTest.persistedJsonlRotatesAndReadsAcrossPreviousAndActiveFiles" }
+"resources.declared_budgets" = { status = "implemented_tested", reason = "Hard caps enforced on pending recordings (20 files/50 MiB) and diagnostics (512 events/512 KiB disk)", implementation = "PendingRecordingStore.pruneToLimits, DiagnosticFlightRecorder", test = "PendingRecordingStoreTest, DictationDiagnosticsTest" }
+"reproduction.recorded_inputs" = { status = "implemented_tested", reason = "Finalized WAV clips preserved in PendingRecordingStore until commitText succeeds", implementation = "PendingRecordingStore", test = "PendingRecordingStoreTest" }
+"reproduction.replay_command" = { status = "implemented_untested", reason = "Retry button and ADB run-as allow replaying saved WAV files", implementation = "WhisperRecordingService.retryPending", test = "planned" }
+"reproduction.fault_injection" = { status = "implemented_tested", reason = "Unit tests inject synthetic gRPC errors, canary secrets, and editor changes", implementation = "DictationDiagnosticsTest", test = "DictationDiagnosticsTest" }
+"postmortem.retention_policy" = { status = "implemented_tested", reason = "Two rotating JSONL files capped at 256 KiB each (512 KiB max)", implementation = "DiagnosticFlightRecorder.drainPendingDiskLines", test = "DictationDiagnosticsTest.persistedJsonlRotatesAndReadsAcrossPreviousAndActiveFiles" }
+"domain.state_dump" = { status = "implemented_tested", reason = "Domain-specific IME, recording phase, S3 segment progress, and queue summary dumped as JSON", implementation = "DictationDiagnostics.buildSnapshotJson", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"domain.cross_boundary_ids" = { status = "implemented_tested", reason = "opId and seg propagated across IME, service, encoder, S3, and queue", implementation = "DictationDiagnostics.nextOpId", test = "DictationDiagnosticsTest" }
+"security.authorization" = { status = "implemented_untested", reason = "Logs stored in Android app-private filesDir/diagnostics accessible only via SetupActivity or ADB", implementation = "DictationDiagnostics.init", test = "planned" }
+"security.redaction" = { status = "implemented_tested", reason = "Forbidden keys and regex redaction strip transcripts, API keys, bearer tokens, and URL credentials", implementation = "DiagnosticFlightRecorder.sanitizeFields, DiagnosticFlightRecorder.redactString", test = "DictationDiagnosticsTest.redactsCanarySecretsAndForbiddenTranscriptFields" }
+"assurance.contract_test" = { status = "implemented_tested", reason = "JUnit test suite verifies recorder, redaction, rotation, gRPC status check, editor identity, and snapshot dump", implementation = "DictationDiagnosticsTest", test = "DictationDiagnosticsTest" }
+"assurance.synthetic_scenarios" = { status = "implemented_tested", reason = "7 synthetic failure and redaction scenarios covered in DictationDiagnosticsTest", implementation = "DictationDiagnosticsTest", test = "DictationDiagnosticsTest" }
+"assurance.symbolization_test" = { status = "not_applicable", reason = "Pure ART/Kotlin app with standard Java stack traces and no native symbols", implementation = "not_applicable", test = "not_applicable" }
+"assurance.redaction_test" = { status = "implemented_tested", reason = "Canary Google API key, bearer secret, URL credentials, and transcript fields verified absent from JSONL", implementation = "DictationDiagnosticsTest.redactsCanarySecretsAndForbiddenTranscriptFields", test = "DictationDiagnosticsTest.redactsCanarySecretsAndForbiddenTranscriptFields" }
+"assurance.overhead_test" = { status = "waived", reason = "Hot audio/Opus loops perform zero logging and only increment primitive/atomic counters; microbenchmark waived for personal IME", implementation = "waived", test = "waived" }
+"assurance.snapshot_test" = { status = "implemented_tested", reason = "Snapshot JSON schema, consistency label, and event dump verified in JUnit", implementation = "DictationDiagnostics.dumpToWriter", test = "DictationDiagnosticsTest.dumpToWriterEmitsSnapshotJsonAndRecentEvents" }
+"audit_trail.event_schema" = { status = "not_applicable", reason = "No durable mutation audit trail required for personal disposable dictation queue", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.actor_writer_and_reason" = { status = "not_applicable", reason = "Single local user with no multi-actor ledger", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.attribution_policy" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.transaction_binding" = { status = "not_applicable", reason = "No relational or transactional database", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.attempted_write_policy" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.provenance_and_deduplication" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.change_representation" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.tamper_evidence" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.retention_and_access" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.query_and_export" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.sink_failure_policy" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.cost_and_backpressure" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"audit_trail.assurance_test" = { status = "not_applicable", reason = "No durable mutation audit trail", implementation = "not_applicable", test = "not_applicable" }
+"deployment_modes.minimal_release" = { status = "not_applicable", reason = "Personal sideloaded APK uses single bounded observable build without separate stripped release-minimal tier", implementation = "not_applicable", test = "not_applicable" }
+"deployment_modes.observable_release" = { status = "implemented_tested", reason = "Bounded always-on DictationDiagnostics compiled into APK", implementation = "DictationDiagnostics", test = "DictationDiagnosticsTest" }
+"deployment_modes.global_runtime_switch" = { status = "implemented_tested", reason = "Global runtime switch short-circuits event recording before formatting or disk enqueue", implementation = "DictationDiagnostics.setEnabled", test = "DictationDiagnosticsTest.runtimeDisableAndCategorySwitchesSkipRecordingAndDiskWrites" }
+"deployment_modes.per_category_switches" = { status = "implemented_tested", reason = "Per-category filter allows isolating or silencing individual subsystems at runtime", implementation = "DictationDiagnostics.setCategoryEnabled", test = "DictationDiagnosticsTest.runtimeDisableAndCategorySwitchesSkipRecordingAndDiskWrites" }
+"deployment_modes.diagnostic_builds" = { status = "implemented_tested", reason = "Debug APK assembled and verified via Gradle", implementation = "app:assembleDebug", test = "./gradlew :app:testDebugUnitTest :app:assembleDebug" }
+"performance_isolation.critical_hot_paths" = { status = "implemented_untested", reason = "AudioRecord PCM loop and OpusOggEncoder avoid logging and disk I/O", implementation = "WavRecording.record, OpusOggEncoder.writePcm", test = "planned" }
+"performance_isolation.baseline_comparison" = { status = "waived", reason = "Hot paths do not emit log events; only coarse segment/session lifecycle transitions record diagnostics", implementation = "waived", test = "waived" }
+"performance_isolation.minimal_mode_test" = { status = "not_applicable", reason = "No separate release-minimal build tier", implementation = "not_applicable", test = "not_applicable" }
+"performance_isolation.runtime_disabled_test" = { status = "implemented_tested", reason = "Verified disabled switch produces zero events and zero disk writes", implementation = "DiagnosticFlightRecorder.enabled", test = "DictationDiagnosticsTest.runtimeDisableAndCategorySwitchesSkipRecordingAndDiskWrites" }
+"performance_isolation.always_on_test" = { status = "implemented_tested", reason = "Bounded ring and async disk queue tested in DictationDiagnosticsTest", implementation = "DiagnosticFlightRecorder", test = "DictationDiagnosticsTest" }
+"performance_isolation.activated_mode_tests" = { status = "not_applicable", reason = "No temporarily-activated high-volume diagnostic modes exist yet", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.semantic_source_and_generation" = { status = "not_applicable", reason = "Single Kotlin Android APK build without separate minimal-erasure variant", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.performance_closure" = { status = "not_applicable", reason = "No separate release-minimal postimage closure", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.assurance_artifacts" = { status = "implemented_tested", reason = "Debug APK assembled and unit-tested via Gradle", implementation = "app/build/outputs/apk/debug/app-debug.apk", test = "./gradlew :app:testDebugUnitTest :app:assembleDebug" }
+"artifact_isolation.release_minimal_postimages" = { status = "not_applicable", reason = "No separate release-minimal APK variant shipped", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.permitted_release_facilities" = { status = "not_applicable", reason = "No separate release-minimal erasure gate", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.forbidden_release_markers" = { status = "not_applicable", reason = "No separate release-minimal erasure gate", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.postimage_absence_test" = { status = "not_applicable", reason = "No separate release-minimal erasure gate", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.runtime_check_absence_test" = { status = "not_applicable", reason = "No separate release-minimal erasure gate", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.dependency_absence_test" = { status = "not_applicable", reason = "No separate release-minimal erasure gate", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.semantic_equivalence_test" = { status = "not_applicable", reason = "Single semantic artifact build", implementation = "not_applicable", test = "not_applicable" }
+"artifact_isolation.artifact_provenance_test" = { status = "not_applicable", reason = "Single semantic artifact build", implementation = "not_applicable", test = "not_applicable" }

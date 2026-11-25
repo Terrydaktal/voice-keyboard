@@ -17,10 +17,29 @@ internal class OpusOggEncoder(
     private val bitRate: Int = 32_000,
     private val onOggPage: (ByteArray) -> Unit,
 ) {
+    data class Stats(
+        val pcmBytesIn: Long,
+        val opusPacketsOut: Long,
+        val oggPagesOut: Long,
+        val oggBytesOut: Long,
+        val preSkip: Int,
+        val eosQueued: Boolean,
+        val eosDrained: Boolean,
+        val inputTimeoutRetries: Long,
+    )
+
     private val codec: MediaCodec
     private var muxer: OggOpusMuxer? = null
     private val bufferInfo = MediaCodec.BufferInfo()
     private var totalSamplesFed = 0L
+    private var pcmBytesIn = 0L
+    private var opusPacketsOut = 0L
+    private var oggPagesOut = 0L
+    private var oggBytesOut = 0L
+    private var resolvedPreSkip = DEFAULT_PRE_SKIP
+    private var eosQueued = false
+    private var eosDrained = false
+    private var inputTimeoutRetries = 0L
     private var closed = false
 
     init {
@@ -39,6 +58,17 @@ internal class OpusOggEncoder(
         }
     }
 
+    fun stats(): Stats = Stats(
+        pcmBytesIn = pcmBytesIn,
+        opusPacketsOut = opusPacketsOut,
+        oggPagesOut = oggPagesOut,
+        oggBytesOut = oggBytesOut,
+        preSkip = resolvedPreSkip,
+        eosQueued = eosQueued,
+        eosDrained = eosDrained,
+        inputTimeoutRetries = inputTimeoutRetries,
+    )
+
     fun writePcm(pcm: ByteArray, offset: Int = 0, length: Int = pcm.size) {
         if (closed || length <= 0) return
         var pos = offset
@@ -54,7 +84,10 @@ internal class OpusOggEncoder(
                 val ptsUs = totalSamplesFed * 1_000_000L / sampleRate
                 codec.queueInputBuffer(inputIndex, 0, chunk, ptsUs, 0)
                 totalSamplesFed += chunk / (2 * channels)
+                pcmBytesIn += chunk
                 pos += chunk
+            } else {
+                inputTimeoutRetries++
             }
             drainOutput(waitForEos = false)
         }
@@ -64,7 +97,6 @@ internal class OpusOggEncoder(
         if (closed) return
         closed = true
         try {
-            var eosQueued = false
             for (attempt in 0 until 200) {
                 val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
                 if (inputIndex >= 0) {
@@ -73,6 +105,7 @@ internal class OpusOggEncoder(
                     eosQueued = true
                     break
                 }
+                inputTimeoutRetries++
                 drainOutput(waitForEos = false)
             }
             if (eosQueued) {
@@ -123,11 +156,15 @@ internal class OpusOggEncoder(
                         if (isConfig) {
                             if (muxer == null) ensureMuxer(extractPreSkip(bytes))
                         } else {
+                            opusPacketsOut++
                             ensureMuxer(DEFAULT_PRE_SKIP).writePacket(bytes)
                         }
                     }
                     codec.releaseOutputBuffer(outputIndex, false)
-                    if (isEos) return
+                    if (isEos) {
+                        eosDrained = true
+                        return
+                    }
                 }
             }
         }
@@ -136,11 +173,16 @@ internal class OpusOggEncoder(
     private fun ensureMuxer(preSkip: Int): OggOpusMuxer {
         val existing = muxer
         if (existing != null) return existing
+        resolvedPreSkip = preSkip
         return OggOpusMuxer(
             sampleRate = sampleRate,
             channels = channels,
             preSkip = preSkip,
-            onPage = onOggPage,
+            onPage = { page ->
+                oggPagesOut++
+                oggBytesOut += page.size
+                onOggPage(page)
+            },
         ).also { muxer = it }
     }
 

@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.terrydaktal.whisperkeyboard"
         minSdk = 29
         targetSdk = 36
-        versionCode = 13
-        versionName = "2.4.0"
+        versionCode = 14
+        versionName = "2.5.0"
     }
 
     compileOptions {
@@ -26,6 +26,6 @@ kotlin {
 }
 
 dependencies {
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
-    testImplementation("junit:junit:4.13.2")
+    implementation(libs.okhttp)
+    testImplementation(libs.junit)
 }

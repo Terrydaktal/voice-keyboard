@@ -64,7 +64,20 @@ internal class PendingRecordingStore(private val dir: File) {
             }.getOrNull() ?: return null
         }
         pruneToLimits(protectedNames = protectedNames + promoted.name)
-        return if (promoted.exists()) promoted else null
+        if (promoted.exists()) {
+            DictationDiagnostics.counters.queueEnqueued.incrementAndGet()
+            DictationDiagnostics.record(
+                category = "queue",
+                event = "enqueue",
+                fields = mapOf(
+                    "file" to promoted.name,
+                    "bytes" to promoted.length(),
+                    "durationMs" to wavDurationMs(promoted.length()),
+                ),
+            )
+            return promoted
+        }
+        return null
     }
 
     fun listPending(excluding: Set<String> = emptySet()): List<Entry> {
@@ -93,7 +106,20 @@ internal class PendingRecordingStore(private val dir: File) {
 
     fun totalBytes(excluding: Set<String> = emptySet()): Long = listPending(excluding).sumOf { it.sizeBytes }
 
-    fun delete(file: File): Boolean = file.delete()
+    fun delete(file: File, reason: String = "unspecified"): Boolean {
+        val name = file.name
+        val bytes = file.length()
+        val deleted = file.delete()
+        if (deleted) {
+            DictationDiagnostics.counters.queueDeleted.incrementAndGet()
+            DictationDiagnostics.record(
+                category = "queue",
+                event = "delete",
+                fields = mapOf("file" to name, "bytes" to bytes, "reason" to reason),
+            )
+        }
+        return deleted
+    }
 
     fun clearAll(excluding: Set<String> = emptySet()): Int {
         var removed = 0
@@ -115,7 +141,15 @@ internal class PendingRecordingStore(private val dir: File) {
             if (evictIndex < 0) break
             val oldest = entries.removeAt(evictIndex)
             total -= oldest.sizeBytes
-            oldest.file.delete()
+            if (oldest.file.delete()) {
+                DictationDiagnostics.counters.queueEvicted.incrementAndGet()
+                DictationDiagnostics.record(
+                    category = "queue",
+                    event = "evict_oldest",
+                    level = DiagnosticFlightRecorder.LEVEL_WARN,
+                    fields = mapOf("file" to oldest.file.name, "bytes" to oldest.sizeBytes),
+                )
+            }
         }
     }
 

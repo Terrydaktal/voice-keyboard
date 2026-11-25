@@ -79,5 +79,12 @@
     <string name="rambler_http_error">Rambler returned HTTP %1$d.</string>
     <string name="no_speech">No speech detected.</string>
     <string name="insert_error">Couldn’t insert the transcript in this field.</string>
+    <string name="tap_insert_transcript">Field changed — tap Insert transcript to paste.</string>
     <string name="allow_notification">Show Stop in notifications</string>
+    <string name="diagnostics_heading">Diagnostics</string>
+    <string name="diagnostics_view_log">View log</string>
+    <string name="diagnostics_copy_report">Copy report</string>
+    <string name="diagnostics_clear_log">Clear log</string>
+    <string name="diagnostics_copied">Diagnostic report copied to clipboard.</string>
+    <string name="diagnostics_cleared">Diagnostic log cleared.</string>
 </resources>
