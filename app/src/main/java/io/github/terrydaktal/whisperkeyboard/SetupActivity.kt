@@ -40,6 +40,8 @@ class SetupActivity : Activity() {
     private lateinit var backendHeading: TextView
     private lateinit var backendGroup: RadioGroup
     private lateinit var clearAddressButton: Button
+    private lateinit var pendingStatusView: TextView
+    private lateinit var clearPendingButton: Button
     private var ramblerRadioId = 0
     private var whisperRadioId = 0
     private var returnOptions: List<ReturnKeyboardOption> = emptyList()
@@ -218,6 +220,19 @@ class SetupActivity : Activity() {
         )
         content.addView(urlActions)
 
+        pendingStatusView = TextView(this).apply {
+            setPadding(0, dp(12), 0, dp(4))
+            visibility = View.GONE
+        }
+        content.addView(pendingStatusView)
+        clearPendingButton = addButton(content, R.string.clear_pending_button) {
+            val removed = WhisperRecordingService.clearAllPending(this)
+            updatePendingControls()
+            Toast.makeText(this, getString(R.string.pending_cleared, removed), Toast.LENGTH_SHORT).show()
+        }.apply {
+            visibility = View.GONE
+        }
+
         content.addView(EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 2
@@ -236,6 +251,7 @@ class SetupActivity : Activity() {
         updateReturnKeyboardSpinner()
         updateBridgeStatus()
         updateBackendControls()
+        updatePendingControls()
     }
 
     override fun onPause() {
@@ -331,6 +347,20 @@ class SetupActivity : Activity() {
             }
             DictationSettings.setBackend(this, selected)
         }
+    }
+
+    private fun updatePendingControls() {
+        val (count, totalBytes) = WhisperRecordingService.pendingSummary(this)
+        if (count == 0) {
+            pendingStatusView.visibility = View.GONE
+            clearPendingButton.visibility = View.GONE
+            return
+        }
+        val kb = ((totalBytes + 1023L) / 1024L).toString()
+        pendingStatusView.text = getString(R.string.pending_status_line, count, kb)
+        pendingStatusView.visibility = View.VISIBLE
+        clearPendingButton.text = getString(R.string.clear_pending_button, count)
+        clearPendingButton.visibility = View.VISIBLE
     }
 
     private fun requestMicrophone() {

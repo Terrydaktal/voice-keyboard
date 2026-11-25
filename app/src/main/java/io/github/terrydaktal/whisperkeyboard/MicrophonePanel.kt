@@ -34,6 +34,8 @@ internal class MicrophonePanel(
     onDeleteChar: () -> Unit,
     onDeleteWord: () -> Unit,
     onEnter: () -> Unit,
+    onPendingTap: (View) -> Unit,
+    onPendingLongPress: (View) -> Unit,
 ) : FrameLayout(context) {
     private val main = Handler(Looper.getMainLooper())
     private val waveform = Waveform(context)
@@ -54,6 +56,7 @@ internal class MicrophonePanel(
     }
     private val returnButton: Button
     private val backendButton: Button
+    private val pendingButton: Button
     private val backspaceButton: ImageButton
     private val enterButton: ImageButton
 
@@ -238,6 +241,39 @@ internal class MicrophonePanel(
             },
         )
 
+        val pendingBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(10).toFloat()
+            setColor(if (dark) 0xFF33261A.toInt() else 0xFFF3E2D0.toInt())
+        }
+        val pendingRipple = RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),
+            pendingBg,
+            null,
+        )
+        pendingButton = Button(context, null, android.R.attr.borderlessButtonStyle).apply {
+            id = R.id.pending_retry_button
+            background = pendingRipple
+            isAllCaps = false
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(if (dark) 0xFFFFC98A.toInt() else 0xFF8C4600.toInt())
+            setPadding(dp(12), 0, dp(12), 0)
+            visibility = View.GONE
+            setOnClickListener { onPendingTap(it) }
+            setOnLongClickListener {
+                onPendingLongPress(it)
+                true
+            }
+        }
+        addView(
+            pendingButton,
+            LayoutParams(LayoutParams.WRAP_CONTENT, dp(48), Gravity.START or Gravity.BOTTOM).apply {
+                marginStart = dp(10)
+                bottomMargin = dp(8)
+            },
+        )
+
         updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(context))
         updateBackend(DictationSettings.backend(context))
     }
@@ -272,6 +308,16 @@ internal class MicrophonePanel(
 
     fun updateEnterAction(labelRes: Int) {
         enterButton.contentDescription = context.getString(labelRes)
+    }
+
+    fun updatePending(count: Int, enabled: Boolean) {
+        pendingButton.visibility = if (count > 0) View.VISIBLE else View.GONE
+        pendingButton.isEnabled = enabled
+        pendingButton.alpha = if (enabled) 1f else 0.55f
+        if (count > 0) {
+            pendingButton.text = context.getString(R.string.pending_retry_button, count)
+            pendingButton.contentDescription = context.getString(R.string.pending_retry_description, count)
+        }
     }
 
     fun show(label: Int, enabled: Boolean, recording: Boolean, busy: Boolean) {

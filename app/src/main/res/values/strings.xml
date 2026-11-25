@@ -61,7 +61,16 @@
     <string name="recording">Recording…</string>
     <string name="recording_channel">Dictation sessions</string>
     <string name="insert_transcript">Insert transcript</string>
-    <string name="retry_transcription">Retry transcription</string>
+    <string name="pending_retry_button">↻ Retry (%1$d)</string>
+    <string name="pending_retry_description">Retry pending recordings (%1$d queued)</string>
+    <string name="pending_menu_retry_oldest">Retry oldest</string>
+    <string name="pending_menu_retry_all">Retry all (%1$d)</string>
+    <string name="pending_menu_discard_oldest">Discard oldest</string>
+    <string name="pending_menu_clear_all">Clear all (%1$d)</string>
+    <string name="pending_discarded">Discarded pending recording.</string>
+    <string name="pending_cleared">Cleared %1$d pending recording(s).</string>
+    <string name="pending_status_line">%1$d pending recording(s) saved (%2$s KB) — tap Clear or retry from the keyboard.</string>
+    <string name="clear_pending_button">Clear pending recordings (%1$d)</string>
     <string name="password_field">Dictation unavailable for passwords</string>
     <string name="microphone_error">Couldn’t record audio. Check microphone access and try again.</string>
     <string name="network_error">Couldn’t transcribe with the Whisper server.</string>

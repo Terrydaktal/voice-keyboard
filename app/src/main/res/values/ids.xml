@@ -5,4 +5,5 @@
     <item type="id" name="dictation_settings_button" />
     <item type="id" name="backspace_button" />
     <item type="id" name="enter_button" />
+    <item type="id" name="pending_retry_button" />
 </resources>

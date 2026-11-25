@@ -10,11 +10,13 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.widget.PopupMenu
 import android.widget.Toast
 import io.github.terrydaktal.whisperkeyboard.WhisperRecordingService.Phase
 
@@ -39,7 +41,7 @@ class WhisperKeyboardService : InputMethodService() {
     private val onStateChanged: (WhisperRecordingService.Snapshot) -> Unit = { state ->
         if (state.phase == Phase.STARTING) autoStartOnOpen = false
         if (state.phase == Phase.STARTING || state.phase == Phase.FINISHED) submittedFrom = null
-        render(state.phase)
+        render(state)
         if (state.phase == Phase.RESULT) insertTranscript(showError = false)
     }
 
@@ -49,6 +51,7 @@ class WhisperKeyboardService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        WhisperRecordingService.refreshPendingCount(this)
         WhisperRecordingService.listeners.add(onStateChanged)
         WhisperRecordingService.levelListeners.add(onAudioLevel)
         layoutPreferences.registerOnSharedPreferenceChangeListener(onLayoutChanged)
@@ -63,12 +66,14 @@ class WhisperKeyboardService : InputMethodService() {
         ::deleteCharacter,
         ::deleteWord,
         ::pressEnter,
+        ::handlePendingTap,
+        ::showPendingMenu,
     ).also {
         panel = it
         it.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
         it.updateEnterAction(EnterAction.labelRes(currentInputEditorInfo))
         refreshBackendButton()
-        render(WhisperRecordingService.snapshot.phase)
+        render(WhisperRecordingService.snapshot)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -78,11 +83,12 @@ class WhisperKeyboardService : InputMethodService() {
         val opening = !viewActive || !restarting
         viewActive = true
         passwordField = isPassword(info.inputType)
+        WhisperRecordingService.setKeyboardVisible(this, true)
         panel?.keyboardHeight = KeyboardLayoutStore.keyboardHeight(this)
         panel?.updateReturnKeyboard(KeyboardLayoutStore.returnKeyboardLabel(this))
         panel?.updateEnterAction(EnterAction.labelRes(info))
         refreshBackendButton()
-        render(WhisperRecordingService.snapshot.phase)
+        render(WhisperRecordingService.snapshot)
         if (!opening) return
 
         val generation = ++viewGeneration
@@ -139,6 +145,7 @@ class WhisperKeyboardService : InputMethodService() {
     private fun closeView() {
         viewActive = false
         viewGeneration++
+        WhisperRecordingService.setKeyboardVisible(this, false)
     }
 
     private fun refreshBackendButton() {
@@ -148,6 +155,62 @@ class WhisperKeyboardService : InputMethodService() {
     private fun showBackendMenu(anchor: View) {
         val recording = WhisperRecordingService.snapshot.phase == Phase.RECORDING
         DictationSettings.showBackendMenu(anchor, isRecording = recording)
+    }
+
+    private fun handlePendingTap(anchor: View) {
+        if (passwordField) return
+        val count = WhisperRecordingService.refreshPendingCount(this)
+        if (count <= 0) return
+        if (count == 1) {
+            submittedFrom = currentInputConnection
+            WhisperRecordingService.retryPending(this, all = false)
+        } else {
+            showPendingMenu(anchor)
+        }
+    }
+
+    private fun showPendingMenu(anchor: View) {
+        val count = WhisperRecordingService.refreshPendingCount(this)
+        if (count <= 0) return
+        PopupMenu(this, anchor, Gravity.START).apply {
+            menu.add(0, MENU_RETRY_OLDEST, 0, R.string.pending_menu_retry_oldest)
+            if (count > 1) {
+                menu.add(0, MENU_RETRY_ALL, 1, getString(R.string.pending_menu_retry_all, count))
+            }
+            menu.add(0, MENU_DISCARD_OLDEST, 2, R.string.pending_menu_discard_oldest)
+            if (count > 1) {
+                menu.add(0, MENU_CLEAR_ALL, 3, getString(R.string.pending_menu_clear_all, count))
+            }
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    MENU_RETRY_OLDEST -> {
+                        if (!passwordField) {
+                            submittedFrom = currentInputConnection
+                            WhisperRecordingService.retryPending(this@WhisperKeyboardService, all = false)
+                        }
+                    }
+                    MENU_RETRY_ALL -> {
+                        if (!passwordField) {
+                            submittedFrom = currentInputConnection
+                            WhisperRecordingService.retryPending(this@WhisperKeyboardService, all = true)
+                        }
+                    }
+                    MENU_DISCARD_OLDEST -> {
+                        WhisperRecordingService.discardOldestPending(this@WhisperKeyboardService)
+                        Toast.makeText(this@WhisperKeyboardService, R.string.pending_discarded, Toast.LENGTH_SHORT).show()
+                    }
+                    MENU_CLEAR_ALL -> {
+                        val removed = WhisperRecordingService.clearAllPending(this@WhisperKeyboardService)
+                        Toast.makeText(
+                            this@WhisperKeyboardService,
+                            getString(R.string.pending_cleared, removed),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                true
+            }
+        }.show()
     }
 
     private fun deleteCharacter() {
@@ -178,11 +241,6 @@ class WhisperKeyboardService : InputMethodService() {
             Phase.RECORDING -> {
                 submittedFrom = currentInputConnection
                 WhisperRecordingService.stopFromKeyboard()
-            }
-            Phase.RETRY -> {
-                if (passwordField) return
-                submittedFrom = currentInputConnection
-                WhisperRecordingService.retry()
             }
             Phase.RESULT -> insertTranscript(showError = true)
             Phase.STARTING, Phase.TRANSCRIBING -> Unit
@@ -222,12 +280,12 @@ class WhisperKeyboardService : InputMethodService() {
         }
     }
 
-    private fun render(phase: Phase) {
+    private fun render(state: WhisperRecordingService.Snapshot) {
+        val phase = state.phase
         val label = when (phase) {
             Phase.RECORDING -> R.string.stop_recording
             Phase.STARTING -> R.string.starting_recording
             Phase.TRANSCRIBING -> R.string.transcribing
-            Phase.RETRY -> if (passwordField) R.string.password_field else R.string.retry_transcription
             Phase.RESULT -> if (passwordField) R.string.password_field else R.string.insert_transcript
             Phase.READY, Phase.FINISHED -> when {
                 passwordField -> R.string.password_field
@@ -238,6 +296,8 @@ class WhisperKeyboardService : InputMethodService() {
         val busy = phase == Phase.STARTING || phase == Phase.TRANSCRIBING
         val enabled = !busy && (phase == Phase.RECORDING || label != R.string.password_field)
         panel?.show(label, enabled, phase == Phase.RECORDING, busy)
+        val pendingEnabled = !busy && phase != Phase.RECORDING && !passwordField
+        panel?.updatePending(state.pendingCount, pendingEnabled)
     }
 
     private fun hasMicrophonePermission(): Boolean =
@@ -258,5 +318,9 @@ class WhisperKeyboardService : InputMethodService() {
     private companion object {
         const val TAG = "WhisperKeyboard"
         const val WINDOW_VISIBLE_SETTLE_MS = 180L
+        const val MENU_RETRY_OLDEST = 1
+        const val MENU_RETRY_ALL = 2
+        const val MENU_DISCARD_OLDEST = 3
+        const val MENU_CLEAR_ALL = 4
     }
 }
