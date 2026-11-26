@@ -31,6 +31,8 @@ internal class RamblerS3Client(
     private val opId: String = "",
     private val segmentIndex: Int = 0,
     private val endpointUrl: String = RamblerS3Proto.URL,
+    private val apiKey: String = RamblerS3Proto.API_KEY,
+    private val androidCert: String = RamblerS3Proto.ANDROID_CERT,
 ) {
     /**
      * Streams live Ogg/Opus chunks from [oggQueue] until an empty [ByteArray] EOF sentinel
@@ -61,6 +63,7 @@ internal class RamblerS3Client(
         sink.write(RamblerS3Proto.grpcFrame(RamblerS3Proto.endRequest()))
         sink.flush()
         stats.endRequestSent.set(true)
+        stats.endReqMs.set((System.nanoTime() / 1_000_000L) - stats.startedMonoMs)
     }
 
     /**
@@ -87,6 +90,7 @@ internal class RamblerS3Client(
         sink.write(RamblerS3Proto.grpcFrame(RamblerS3Proto.endRequest()))
         sink.flush()
         stats.endRequestSent.set(true)
+        stats.endReqMs.set((System.nanoTime() / 1_000_000L) - stats.startedMonoMs)
     }
 
     private fun writeOggChunk(sink: BufferedSink, chunk: ByteArray, stats: CallStats) {
@@ -144,6 +148,10 @@ internal class RamblerS3Client(
         val endpointerCount = AtomicInteger(0)
         val lastEndpointer = AtomicReference<Long?>(null)
         val firstResponseMs = AtomicLong(-1L)
+        val endReqMs = AtomicLong(-1L)
+        val ep0Ms = AtomicLong(-1L)
+        val epEndMs = AtomicLong(-1L)
+        val firstFinalMs = AtomicLong(-1L)
         val lastHeartbeatMonoMs = AtomicLong(startedMonoMs)
     }
 
@@ -200,12 +208,20 @@ internal class RamblerS3Client(
             }
         }
 
+        val resolvedApiKey = apiKey.trim()
+        val resolvedAndroidCert = androidCert.trim()
+        if (resolvedApiKey.isEmpty() || resolvedAndroidCert.isEmpty()) {
+            throw IOException(
+                "Rambler S3 credentials not configured; set rambler.s3.apiKey and rambler.s3.androidCert in local.properties before building",
+            )
+        }
+
         val request = Request.Builder()
             .url(endpointUrl)
             .header("te", "trailers")
-            .header("x-goog-api-key", RamblerS3Proto.API_KEY)
+            .header("x-goog-api-key", resolvedApiKey)
             .header("x-android-package", RamblerS3Proto.ANDROID_PACKAGE)
-            .header("x-android-cert", RamblerS3Proto.ANDROID_CERT)
+            .header("x-android-cert", resolvedAndroidCert)
             .post(body)
             .build()
 
@@ -264,13 +280,25 @@ internal class RamblerS3Client(
                         stats.nonEmptyEventsIn.incrementAndGet()
                         event.status?.let { stats.lastS3Status.set(it) }
                         event.recStatus?.let { stats.lastRecStatus.set(it) }
-                        event.endpointer?.let {
+                        event.endpointer?.let { ep ->
                             stats.endpointerCount.incrementAndGet()
-                            stats.lastEndpointer.set(it)
+                            stats.lastEndpointer.set(ep)
+                            val relMs = (System.nanoTime() / 1_000_000L) - startedMonoMs
+                            if (ep == 0L) {
+                                stats.ep0Ms.compareAndSet(-1L, relMs)
+                            } else if (ep >= 1L) {
+                                stats.epEndMs.compareAndSet(-1L, relMs)
+                            }
                         }
                         if (event.partials.isNotEmpty()) stats.partialsIn.incrementAndGet()
-                        if (event.finals.isNotEmpty()) stats.finalsIn.incrementAndGet()
-                        if (event.results.isNotEmpty()) stats.resultsIn.incrementAndGet()
+                        if (event.finals.isNotEmpty()) {
+                            stats.finalsIn.incrementAndGet()
+                            stats.firstFinalMs.compareAndSet(-1L, (System.nanoTime() / 1_000_000L) - startedMonoMs)
+                        }
+                        if (event.results.isNotEmpty()) {
+                            stats.resultsIn.incrementAndGet()
+                            stats.firstFinalMs.compareAndSet(-1L, (System.nanoTime() / 1_000_000L) - startedMonoMs)
+                        }
                         if (event.finalFallback != null || event.resultFallback != null) {
                             stats.fallbacksIn.incrementAndGet()
                         }
@@ -336,6 +364,10 @@ internal class RamblerS3Client(
             "protocol" to protocol,
             "elapsedMs" to elapsedMs,
             "firstRespMs" to stats.firstResponseMs.get(),
+            "endReqMs" to stats.endReqMs.get(),
+            "ep0Ms" to stats.ep0Ms.get(),
+            "epEndMs" to stats.epEndMs.get(),
+            "firstFinalMs" to stats.firstFinalMs.get(),
             "oggChunksOut" to stats.oggChunksOut.get(),
             "oggBytesOut" to stats.oggBytesOut.get(),
             "endRequestSent" to stats.endRequestSent.get(),

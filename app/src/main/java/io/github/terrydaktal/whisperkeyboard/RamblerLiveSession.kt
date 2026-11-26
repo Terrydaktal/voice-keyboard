@@ -185,6 +185,9 @@ internal class RamblerLiveSession(
 
         val pcmBytesIn = AtomicLong(0L)
         private val pcmChunksIn = AtomicLong(0L)
+        private val recentRms = IntArray(TAIL_RMS_WINDOW_CHUNKS)
+        private var recentRmsPos = 0
+        private var recentRmsCount = 0
         @Volatile private var maxRms = 0.0
         @Volatile var text: String = ""
         @Volatile var error: Throwable? = null
@@ -205,7 +208,24 @@ internal class RamblerLiveSession(
             pcmChunksIn.incrementAndGet()
             pcmBytesIn.addAndGet(pcm.size.toLong())
             if (rms > maxRms) maxRms = rms
+            synchronized(recentRms) {
+                recentRms[recentRmsPos] = rms.toInt()
+                recentRmsPos = (recentRmsPos + 1) % recentRms.size
+                if (recentRmsCount < recentRms.size) recentRmsCount++
+            }
             pcmQueue.offer(pcm)
+        }
+
+        private fun tailRmsSummary(): Pair<Int, Int> = synchronized(recentRms) {
+            if (recentRmsCount == 0) return 0 to 0
+            var sum = 0L
+            var peak = 0
+            for (i in 0 until recentRmsCount) {
+                val v = recentRms[i]
+                sum += v
+                if (v > peak) peak = v
+            }
+            (sum / recentRmsCount).toInt() to peak
         }
 
         fun closeInput() {
@@ -234,6 +254,7 @@ internal class RamblerLiveSession(
                     encoder.abort()
                 }
                 val encStats = encoder.stats()
+                val (tailAvgRms, tailMaxRms) = tailRmsSummary()
                 DictationDiagnostics.record(
                     category = "encoder",
                     event = "segment_done",
@@ -248,6 +269,8 @@ internal class RamblerLiveSession(
                         "pcmChunks" to pcmChunksIn.get(),
                         "pcmBytes" to encStats.pcmBytesIn,
                         "maxRms" to maxRms.toInt(),
+                        "tailAvgRms" to tailAvgRms,
+                        "tailMaxRms" to tailMaxRms,
                         "opusPackets" to encStats.opusPacketsOut,
                         "oggPages" to encStats.oggPagesOut,
                         "oggBytes" to encStats.oggBytesOut,
@@ -382,6 +405,7 @@ internal class RamblerLiveSession(
         private const val SILENCE_RMS_THRESHOLD = 400.0
         private const val SILENCE_PAUSE_MS = 300L
         private const val WAV_HEADER_BYTES = 44L
+        private const val TAIL_RMS_WINDOW_CHUNKS = 50 // ~2.0 s at 40 ms/chunk
         private val EOF = ByteArray(0)
         private val executor = Executors.newCachedThreadPool()
 

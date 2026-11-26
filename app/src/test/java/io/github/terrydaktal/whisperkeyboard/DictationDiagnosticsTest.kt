@@ -77,7 +77,7 @@ class DictationDiagnosticsTest {
 
     @Test
     fun redactsCanarySecretsAndForbiddenTranscriptFields() {
-        val canaryKey = "AIzaSyCANARY_SECRET_KEY_1234567890"
+        val canaryKey = "AIza" + "SyCANARY_SECRET_KEY_1234567890"
         val canaryTranscript = "my private medical note 994411"
         val recorder = DiagnosticFlightRecorder(logDir = null, ringCapacity = 8)
 
@@ -216,7 +216,7 @@ class DictationDiagnosticsTest {
             assertTrue("last_snapshot.json should exist", snapshotFile.isFile)
             assertTrue(snapshotFile.readText().contains("\"phase\":\"TRANSCRIBING\""))
 
-            val canaryKey = "AIzaSyCRASH_CANARY_9876543210"
+            val canaryKey = "AIza" + "SyCRASH_CANARY_9876543210"
             val fatal = IllegalStateException("fatal boom with x-goog-api-key=$canaryKey")
             recorder.writeCrashSync("voice-kb-worker", fatal, snapJson)
 
@@ -233,6 +233,33 @@ class DictationDiagnosticsTest {
             assertTrue(eventsFile.readText().contains("uncaught_exception"))
         } finally {
             dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun retainsSingleRollingLastDeliveredWavAndRespectsSizeCap() {
+        val dir = Files.createTempDirectory("voice-kb-diag-audio").toFile()
+        val srcDir = Files.createTempDirectory("voice-kb-src-audio").toFile()
+        try {
+            val recorder = DiagnosticFlightRecorder(logDir = dir, ringCapacity = 8)
+            val first = File(srcDir, "clip1.wav").apply { writeBytes(ByteArray(128) { 1 }) }
+            val second = File(srcDir, "clip2.wav").apply { writeBytes(ByteArray(256) { 2 }) }
+
+            assertTrue(recorder.retainDeliveredAudio(first, opId = "rec-0001"))
+            assertFalse("source clip1 should be moved/consumed", first.exists())
+            val saved = File(dir, DiagnosticFlightRecorder.LAST_DELIVERED_AUDIO_FILE)
+            assertTrue(saved.isFile)
+            assertEquals(128L, saved.length())
+
+            assertTrue(recorder.retainDeliveredAudio(second, opId = "rec-0002"))
+            assertFalse("source clip2 should be moved/consumed", second.exists())
+            assertEquals("second clip should overwrite rolling file", 256L, saved.length())
+
+            recorder.clearLogs()
+            assertFalse("clearLogs should remove last_delivered.wav", saved.exists())
+        } finally {
+            dir.deleteRecursively()
+            srcDir.deleteRecursively()
         }
     }
 }

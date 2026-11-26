@@ -66,6 +66,13 @@ voice-keyboard/
 
 Use JDK 17 and Android SDK Platform 36. Point `sdk.dir` in `local.properties` at your Android SDK (or set `ANDROID_HOME`).
 
+To enable the **Rambler** backend in your local build, copy `local.properties.example` fields into your untracked `local.properties` (or export `RAMBLER_S3_API_KEY` and `RAMBLER_S3_ANDROID_CERT`):
+
+```properties
+rambler.s3.apiKey=<your-s3-api-key>
+rambler.s3.androidCert=<your-android-cert-sha1>
+```
+
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
@@ -98,12 +105,13 @@ Artifacts persisted in private app storage (`filesDir/diagnostics/`, readable in
 - `events.jsonl` + `events.1.jsonl`: rotating structured JSONL event stream (512 KiB total cap) correlated by per-session `opId` (`rec-NNNN` / `retry-NNNN`).
 - `last_snapshot.json`: atomically updated JSON snapshot (build identity, config, counters, IME/service state, last error) written on process init, session completion, errors, and insert decisions.
 - `last_crash.json`: written synchronously by an `UncaughtExceptionHandler` (after flushing pending `events.jsonl` lines) if an uncaught exception kills the process.
+- `last_delivered.wav`: rolling single-file copy (≤ 10 MiB, O(1) rename on delivery, overwritten by the next recording) so post-delivery cutoff issues can be replayed remotely via `./scripts/adb-diagnose.sh -s DEVICE --pull-audio /tmp/last.wav`.
 
 Pull everything in one command:
 ```sh
 ./scripts/adb-diagnose.sh -s DEVICE
 ```
-Optional flags: `--lines 150` (adjust event tail), `--clear` (wipe device diagnostic files). Live `dumpsys` hooks are also implemented on `WhisperRecordingService`, `WhisperKeyboardService`, and `SwiftKeyBridgeService`, and events mirror to `adb logcat -s VoiceKeyboardDiag`.
+Optional flags: `--lines 150` (adjust event tail), `--pull-audio PATH` (copy `last_delivered.wav`), `--clear` (wipe device diagnostic files). Live `dumpsys` hooks are also implemented on `WhisperRecordingService`, `WhisperKeyboardService`, and `SwiftKeyBridgeService`, and events mirror to `adb logcat -s VoiceKeyboardDiag`.
 
 ## Migrating from the Old Two-App Setup
 

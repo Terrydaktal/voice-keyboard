@@ -1,0 +1,7 @@
+# Copy to local.properties (gitignored) before building.
+# sdk.dir=/path/to/Android/Sdk
+
+# Required to enable the Rambler (S3) backend in locally built APKs.
+# Alternatively export RAMBLER_S3_API_KEY and RAMBLER_S3_ANDROID_CERT in your build environment.
+rambler.s3.apiKey=
+rambler.s3.androidCert=

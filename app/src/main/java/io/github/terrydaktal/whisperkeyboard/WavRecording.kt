@@ -16,6 +16,7 @@ internal object WavRecording {
     private const val BYTES_PER_SAMPLE = 2
     private const val HEADER_BYTES = 44
     private const val BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE
+    internal const val DEFAULT_TAIL_DRAIN_MS = 280L
 
     // The service checks RECORD_AUDIO immediately before scheduling the capture.
     @SuppressLint("MissingPermission")
@@ -24,6 +25,7 @@ internal object WavRecording {
         shouldStop: () -> Boolean,
         onLevel: (Float) -> Unit,
         onPcmChunk: ((ByteArray, Int) -> Unit)? = null,
+        tailDrainMs: Long = DEFAULT_TAIL_DRAIN_MS,
     ): Long {
         if (shouldStop()) return 0
 
@@ -65,6 +67,20 @@ internal object WavRecording {
                         dataBytes += count
                     }
                     if (count >= BYTES_PER_SAMPLE) onLevel(level(buffer, count))
+                }
+
+                // Drain a short post-Stop tail so audio still buffered in Android's DSP /
+                // AudioFlinger / Bluetooth pipeline is not clipped when Stop is tapped right
+                // at the end of a sentence.
+                if (dataBytes > 0L && tailDrainMs > 0L) {
+                    val drainDeadlineNanos = System.nanoTime() + (tailDrainMs * 1_000_000L)
+                    while (System.nanoTime() < drainDeadlineNanos) {
+                        val count = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                        if (count <= 0) break
+                        audio.write(buffer, 0, count)
+                        onPcmChunk?.invoke(buffer, count)
+                        dataBytes += count
+                    }
                 }
 
                 audio.seek(0)

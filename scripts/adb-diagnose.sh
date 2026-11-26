@@ -5,6 +5,7 @@ PACKAGE="io.github.terrydaktal.whisperkeyboard"
 SERIAL="${ANDROID_SERIAL:-}"
 EVENT_LINES=80
 CLEAR_LOGS=false
+PULL_AUDIO_OUT=""
 
 usage() {
 	cat <<'EOF'
@@ -12,7 +13,7 @@ NAME
     adb-diagnose.sh - Pull Voice Keyboard remote diagnostics over ADB
 
 SYNOPSIS
-    adb-diagnose.sh [-s SERIAL] [--lines N] [--clear] [-h|--help]
+    adb-diagnose.sh [-s SERIAL] [--lines N] [--pull-audio PATH] [--clear] [-h|--help]
 
 DESCRIPTION
     Collects persisted and live diagnostic state from the Android Voice Keyboard
@@ -29,9 +30,13 @@ OPTIONS
     -n, --lines N
         Number of recent JSONL events to display (default: 80).
 
+    --pull-audio PATH
+        Copy files/diagnostics/last_delivered.wav from the device to local PATH
+        for forensic replay.
+
     --clear
         Delete persisted diagnostic logs (events*.jsonl, last_snapshot.json,
-        last_crash.json) on the device after printing nothing.
+        last_crash.json, last_delivered.wav) on the device.
 
     -h, --help
         Display this help text and exit.
@@ -92,6 +97,14 @@ while (($# > 0)); do
 		EVENT_LINES="$2"
 		shift 2
 		;;
+	--pull-audio)
+		[[ $# -ge 2 ]] || {
+			echo "ERROR: $1 requires an output file path" >&2
+			exit 1
+		}
+		PULL_AUDIO_OUT="$2"
+		shift 2
+		;;
 	--clear)
 		CLEAR_LOGS=true
 		shift
@@ -114,8 +127,19 @@ if [[ -n "$SERIAL" ]]; then
 fi
 
 if [[ "$CLEAR_LOGS" == true ]]; then
-	"${adb_cmd[@]}" shell "run-as $PACKAGE rm -f files/diagnostics/events.jsonl files/diagnostics/events.1.jsonl files/diagnostics/last_snapshot.json files/diagnostics/last_crash.json"
+	"${adb_cmd[@]}" shell "run-as $PACKAGE rm -f files/diagnostics/events.jsonl files/diagnostics/events.1.jsonl files/diagnostics/last_snapshot.json files/diagnostics/last_crash.json files/diagnostics/last_delivered.wav"
 	echo "Cleared Voice Keyboard diagnostics on device."
+	exit 0
+fi
+
+if [[ -n "$PULL_AUDIO_OUT" ]]; then
+	if "${adb_cmd[@]}" shell "run-as $PACKAGE test -f files/diagnostics/last_delivered.wav"; then
+		"${adb_cmd[@]}" exec-out "run-as $PACKAGE cat files/diagnostics/last_delivered.wav" >"$PULL_AUDIO_OUT"
+		echo "Pulled last_delivered.wav -> $PULL_AUDIO_OUT ($(stat -c %s "$PULL_AUDIO_OUT") bytes)"
+	else
+		echo "No last_delivered.wav present on device." >&2
+		exit 1
+	fi
 	exit 0
 fi
 
@@ -135,6 +159,10 @@ echo "=== LAST CRASH (files/diagnostics/last_crash.json) ==="
 echo
 echo "=== RECENT PERSISTED EVENTS (last $EVENT_LINES) ==="
 "${adb_cmd[@]}" shell "run-as $PACKAGE sh -c 'if [ -f files/diagnostics/events.1.jsonl ] || [ -f files/diagnostics/events.jsonl ]; then cat files/diagnostics/events.1.jsonl files/diagnostics/events.jsonl 2>/dev/null | tail -n $EVENT_LINES; else echo \"(none)\"; fi'" || true
+
+echo
+echo "=== LAST DELIVERED AUDIO (files/diagnostics/last_delivered.wav) ==="
+"${adb_cmd[@]}" shell "run-as $PACKAGE ls -la files/diagnostics/last_delivered.wav 2>&1 || echo '(none)'" || true
 
 echo
 echo "=== PENDING DICTATIONS ==="

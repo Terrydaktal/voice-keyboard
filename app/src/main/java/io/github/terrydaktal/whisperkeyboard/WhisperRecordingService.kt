@@ -840,8 +840,11 @@ class WhisperRecordingService : Service() {
             val delivered = pendingDeliveryFiles
             pendingDeliveryFiles = emptyList()
             val service = current
-            for (file in delivered) {
-                if (service != null) {
+            for ((idx, file) in delivered.withIndex()) {
+                val keepAsLast = idx == delivered.lastIndex
+                if (keepAsLast && DictationDiagnostics.retainDeliveredAudio(file, opId)) {
+                    DictationDiagnostics.counters.queueDeleted.incrementAndGet()
+                } else if (service != null) {
                     service.store.delete(file, reason = "transcript_delivered")
                 } else {
                     val deleted = file.delete()

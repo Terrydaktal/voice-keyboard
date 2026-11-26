@@ -126,8 +126,11 @@ declared_budgets = [
 high_water_reporting = "planned"
 
 [reproduction]
-recorded_inputs = ["Failed dictation WAV clips preserved in filesDir/pending_dictations"]
-replay_command = "Retry pending clip from Voice Keyboard Retry button or pull WAV via adb run-as"
+recorded_inputs = [
+  "Failed dictation WAV clips preserved in filesDir/pending_dictations",
+  "Rolling single-file last_delivered.wav (<= 10 MiB) retained in filesDir/diagnostics for post-delivery cutoff replay",
+]
+replay_command = "./scripts/adb-diagnose.sh -s DEVICE --pull-audio /tmp/last.wav (or Retry button for failed clips)"
 fault_injection = ["Synthetic gRPC status validation and editor target mismatch in DictationDiagnosticsTest"]
 
 [postmortem]

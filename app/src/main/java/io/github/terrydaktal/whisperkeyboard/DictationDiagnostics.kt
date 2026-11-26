@@ -373,6 +373,44 @@ internal class DiagnosticFlightRecorder(
             runCatching { File(dir, PREV_LOG_FILE).delete() }
             runCatching { File(dir, SNAPSHOT_FILE).delete() }
             runCatching { File(dir, CRASH_FILE).delete() }
+            runCatching { File(dir, LAST_DELIVERED_AUDIO_FILE).delete() }
+        }
+    }
+
+    /**
+     * Atomically retains a rolling single-file copy of the most recently delivered WAV
+     * (capped at [MAX_SAVED_AUDIO_BYTES]) by renaming [sourceFile] into the diagnostics
+     * directory so post-delivery cutoff issues can be replayed remotely over ADB.
+     * Always consumes (renames or deletes) [sourceFile].
+     */
+    fun retainDeliveredAudio(sourceFile: File, opId: String = ""): Boolean {
+        val dir = logDir
+        val bytes = sourceFile.length()
+        if (dir == null || !sourceFile.isFile || bytes <= 0L || bytes > MAX_SAVED_AUDIO_BYTES) {
+            sourceFile.delete()
+            return false
+        }
+        return synchronized(diskWriteLock) {
+            try {
+                if (!dir.exists()) dir.mkdirs()
+                val target = File(dir, LAST_DELIVERED_AUDIO_FILE)
+                if (target.exists()) target.delete()
+                val moved = sourceFile.renameTo(target)
+                if (!moved) {
+                    sourceFile.copyTo(target, overwrite = true)
+                    sourceFile.delete()
+                }
+                record(
+                    category = "queue",
+                    event = "retain_last_delivered",
+                    opId = opId,
+                    fields = mapOf("bytes" to bytes, "file" to LAST_DELIVERED_AUDIO_FILE),
+                )
+                true
+            } catch (_: Throwable) {
+                sourceFile.delete()
+                false
+            }
         }
     }
 
@@ -524,6 +562,8 @@ internal class DiagnosticFlightRecorder(
         const val PREV_LOG_FILE = "events.1.jsonl"
         const val SNAPSHOT_FILE = "last_snapshot.json"
         const val CRASH_FILE = "last_crash.json"
+        const val LAST_DELIVERED_AUDIO_FILE = "last_delivered.wav"
+        const val MAX_SAVED_AUDIO_BYTES = 10L * 1024L * 1024L
         private const val MAX_CRASH_STACK_FRAMES = 24
         private const val MAX_FIELDS = 24
         private const val MAX_KEY_LEN = 40
@@ -738,6 +778,9 @@ internal object DictationDiagnostics {
         val snap = buildSnapshotJson(context)
         recorder.writeSnapshotAsync(snap)
     }
+
+    fun retainDeliveredAudio(sourceFile: File, opId: String = ""): Boolean =
+        recorder.retainDeliveredAudio(sourceFile, opId)
 
     val counters: DiagnosticFlightRecorder.Counters
         get() = recorder.counters

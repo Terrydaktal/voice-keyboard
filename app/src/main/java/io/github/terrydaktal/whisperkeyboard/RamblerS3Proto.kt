@@ -14,9 +14,11 @@ internal object RamblerS3Proto {
     const val PATH = "/speech.s3.S3StubbyClientConnectorService/S3Bidi"
     const val URL = "https://$HOST$PATH"
 
-    const val API_KEY = "<REDACTED_S3_API_KEY>"
+    val API_KEY: String
+        get() = BuildConfig.RAMBLER_S3_API_KEY
     const val ANDROID_PACKAGE = "com.google.android.googlequicksearchbox"
-    const val ANDROID_CERT = "<REDACTED_ANDROID_CERT>"
+    val ANDROID_CERT: String
+        get() = BuildConfig.RAMBLER_S3_ANDROID_CERT
 
     const val DEFAULT_SERVICE = "beyond-a2a-recognizer"
     const val DEFAULT_ROUTING_KEY = "gboard_gemini_v3_streaming_voice_edit_mul"
